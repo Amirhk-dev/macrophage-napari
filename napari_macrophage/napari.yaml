@@ -1,0 +1,33 @@
+# napari manifest
+name: napari-macrophage
+
+contributions:
+  commands:
+    - id: napari-macrophage.upload_image
+      title: Load Image + Mask
+      python_name: napari_macrophage.build_widgets:make_add_layer_from_tif_widget
+
+    - id: napari-macrophage.upload_zarr
+      title: Load from zarr
+      python_name: napari_macrophage.build_widgets:make_add_layer_from_zarr_widget
+
+    - id: napari-macrophage.edit_overlay_all
+      title: Edit CD206 + DAPI + Masks 
+      python_name: napari_macrophage.build_widgets:make_edit_overlay_all_widget
+
+    - id: napari-macrophage.run_watershed_for_all_rois
+      title: Run Watershed for All ROIs
+      python_name: napari_macrophage.build_widgets:make_run_watershed_for_all_rois_widget
+
+  widgets:
+    - command: napari-macrophage.upload_image
+      display_name: Load Image + Mask
+
+    - command: napari-macrophage.upload_zarr
+      display_name: Load from Zarr
+
+    - command: napari-macrophage.edit_overlay_all
+      display_name: Edit CD206 + DAPI + Masks
+
+    - command: napari-macrophage.run_watershed_for_all_rois
+      display_name: Run Watershed for All ROIs
