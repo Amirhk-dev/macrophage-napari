@@ -7,8 +7,8 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 ## Features
 - Load image (CD206, optional DAPI) and 3D mask.
 - Click-to-select object in Masks; delete object in a single slice or across all slices; change or assign new ID; renumber objects.
-- View/ edit a single object via an “Object {id}” layer.
-- ROI workflow: draw a bounding box → preview Otsu segmentation (preview mask with postprocessing and can be adjusted with slider) → optional Watershed → save 3D mask. 
+- View / edit a single object via an “Object {id}” layer.
+- ROI workflow: draw a bounding box --> preview Otsu segmentation (preview mask with postprocessing and can be adjusted with slider) --> optional Watershed --> save 3D mask. 
 - Annotate bounding box and export/import YOLO bounding box: export annotated bounding boxes as YOLO styled .txt file; import bounding boxes from .txt.
 - Perform cell analysis.
 
@@ -18,10 +18,23 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 
 Install the dependencies and the plugin via pip:
 
+with conda:
+```bash
+conda create -n mic_napari python=3.11 -y
+conda activate mic_napari
+```
+
+with pip (if not with conda):
+```bash
+python -m venv .mic_napari
+source .mic_napari/bin/activate
+```
+
 ```bash
 pip install -r requirements.txt
 pip install -e.
 ```
+
 Launch Napari:
 ```bash
 napari
@@ -118,5 +131,3 @@ Resample CD206 and Masks so that voxel spacing is isotropic:
 
 ### **7. Save edited masks**
 Please use Napari’s built-in **Save** shortcut on your computer.
-
-
