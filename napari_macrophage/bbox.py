@@ -162,7 +162,7 @@ def export_bboxes_to_yolo():
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
     file_name = dataState.file_name
-    cd206_images = dataState.cd206_images   
+    cd206_images = dataState.cd206_images
     roi_layer = viewer.layers["ROI"]
     if len(roi_layer.data) == 0:
         show_warning("No bounding box to export")
@@ -212,7 +212,7 @@ def export_bboxes_to_yolo():
         y_c_n = np.float32(y_center) / np.float32(H)
         w_n = np.float32(w) / np.float32(W)
         h_n = np.float32(h) / np.float32(H)
-  
+
         per_slice.setdefault(z_idx, []).append((x_c_n, y_c_n, w_n, h_n))
 
     if not per_slice:
@@ -228,6 +228,7 @@ def export_bboxes_to_yolo():
         out_path = os.path.join(out_dir, txt_name)
         with open(out_path, "w") as f:
             for cls, (xc, yc, ww, hh) in enumerate(rows):
+                cls = 0  # one class only
                 f.write(f"{cls} {xc:.6f} {yc:.6f} {ww:.6f} {hh:.6f}\n")
                 boxes_written += 1
         files_written += 1
