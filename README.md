@@ -4,6 +4,8 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 
 ---
 
+![Demo](docs/demo.gif)
+
 ## Features
 - Load image (CD206, optional DAPI) and 3D mask.
 - Click-to-select object in Masks; delete object in a single slice or across all slices; change or assign new ID; renumber objects.
