@@ -4,7 +4,9 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 
 ---
 
-![Demo](docs/3D_generation.gif)
+<div align="center">
+  <img src="docs/3D_generation.gif" alt="Demo" />
+</div>
 
 ## Features
 - Load image (CD206, optional DAPI) and 3D mask.
