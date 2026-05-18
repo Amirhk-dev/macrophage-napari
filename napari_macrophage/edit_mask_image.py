@@ -1,7 +1,8 @@
 import numpy as np
 import napari
 from napari.utils.notifications import show_info, show_warning
-from scipy.ndimage import label
+from scipy.ndimage import label, binary_fill_holes, gaussian_filter
+from skimage.filters import threshold_otsu
 
 from .error import _layers_not_in_viewer_error
 from .state import dataState
@@ -463,3 +464,127 @@ def interpolate_to_isotropic():
     else:
         show_warning("Please select either CD206, DAPI or Masks layer to interpolate")
         return
+
+
+##### Shrink mask to CD206 + DAPI boundaries (current slice only) #####
+def shrink_mask_to_cd206():
+    """Shrink the selected object's mask on the current slice using CD206 + DAPI signal.
+
+    Region-based approach:
+    1. Build a combined signal from CD206 (+ DAPI if available), normalised to [0, 1].
+    2. Compute an Otsu threshold on the signal values *inside the mask only*, so the
+       threshold separates bright cell signal from dim regions included in the mask.
+    3. Keep only pixels above the threshold, then retain the largest connected component
+       (the real cell body) and discard small fragments.
+    The result is always intersected with the original mask so it can only shrink.
+    """
+    viewer = napari.current_viewer()
+    required_layers = ["Masks", "CD206"]
+    if _layers_not_in_viewer_error(viewer, required_layers):
+        return
+
+    layer = viewer.layers.selection.active
+    if layer.name != "Masks":
+        msg = f"Current active layer is {layer.name}, please select the Masks layer"
+        show_warning(msg)
+        print(msg)
+        return
+
+    object_id = getattr(layer, "selected_object_id", None)
+    if not object_id:
+        msg = "Please click on an object to select it first"
+        show_info(msg)
+        print(msg)
+        return
+
+    cd206 = dataState.cd206_images
+    if cd206 is None:
+        show_warning("CD206 image not loaded")
+        return
+
+    mask_data = layer.data
+    z = int(viewer.dims.current_step[0])
+
+    obj_mask_slice = (mask_data[z] == object_id)
+    if not obj_mask_slice.any():
+        show_warning(f"Object {object_id} is not present on slice {z}")
+        return
+
+    def _norm(arr):
+        a = arr.astype(float)
+        lo, hi = a.min(), a.max()
+        if hi == lo:
+            return None
+        return (a - lo) / (hi - lo)
+
+    cd206_norm = _norm(cd206[z])
+    if cd206_norm is None:
+        show_warning(f"No CD206 intensity variation on slice {z}")
+        return
+
+    def _otsu_mask(channel_norm):
+        """Return a boolean mask of pixels above Otsu threshold, computed inside the object mask."""
+        vals = channel_norm[obj_mask_slice]
+        if vals.max() == vals.min():
+            return None
+        thresh = threshold_otsu(vals)
+        return channel_norm >= thresh
+
+    cd206_above = _otsu_mask(cd206_norm)
+
+    # Threshold DAPI independently and union with CD206 so neither signal is lost
+    dapi = dataState.dapi_images
+    channels_used = "CD206"
+    if dapi is not None:
+        dapi_norm = _norm(dapi[z])
+        if dapi_norm is not None:
+            dapi_above = _otsu_mask(dapi_norm)
+            if dapi_above is not None:
+                above_thresh = (cd206_above | dapi_above) & obj_mask_slice
+                channels_used = "CD206 + DAPI"
+            else:
+                above_thresh = cd206_above & obj_mask_slice
+        else:
+            above_thresh = cd206_above & obj_mask_slice
+    else:
+        above_thresh = cd206_above & obj_mask_slice
+
+    if not above_thresh.any():
+        show_warning(f"No pixels above threshold for object {object_id} on slice {z}. Aborting.")
+        return
+
+    # Keep the largest connected component so we get the main cell body
+    labeled, n_comps = label(above_thresh)
+    if n_comps > 1:
+        comp_sizes = np.bincount(labeled.ravel())
+        comp_sizes[0] = 0  # ignore background label
+        above_thresh = (labeled == int(comp_sizes.argmax()))
+
+    # Fill interior holes (background pixels fully enclosed by the object)
+    above_thresh = binary_fill_holes(above_thresh)
+
+    # Smooth the boundary: blur the binary mask and re-threshold at 0.5
+    above_thresh = gaussian_filter(above_thresh.astype(float), sigma=2) >= 0.5
+
+    shrunk = above_thresh & obj_mask_slice  # safety: intersect with original mask
+
+    if not shrunk.any():
+        show_warning(f"Shrinking would remove all voxels of object {object_id} on slice {z}. Aborting.")
+        return
+
+    # Write back: clear old object pixels, paint shrunk region
+    new_slice = mask_data[z].copy()
+    new_slice[obj_mask_slice] = 0
+    new_slice[shrunk] = object_id
+    mask_data[z] = new_slice
+
+    for l in viewer.layers:
+        l.refresh()
+
+    removed_count = int(obj_mask_slice.sum()) - int(shrunk.sum())
+    msg = f"Shrunk object {object_id} on slice {z} using {channels_used}: removed {removed_count} voxels"
+    show_info(msg)
+    print(msg)
+
+    layer.selected_object_id = 0
+    layer.click_coords = None
