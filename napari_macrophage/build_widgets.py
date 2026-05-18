@@ -6,7 +6,7 @@ from qtpy import QtWidgets, QtCore
 from napari.utils.notifications import show_info, show_warning
 
 from .io import add_image_layer, add_mask_layer, add_layer_from_zarr
-from .edit_mask_image import delete_all, delete_object, edit_object_id, renumber, add_object_layer, sync_object_to_masks, _step_object_in_slice, select_object, interpolate_to_isotropic
+from .edit_mask_image import delete_all, delete_object, edit_object_id, renumber, add_object_layer, sync_object_to_masks, _step_object_in_slice, select_object, interpolate_to_isotropic, shrink_mask_to_cd206
 from .segmentation import run_watershed_for_all_rois, finalise_mask, run_watershed_on_bbox, _create_slider_or_update_otsu, _create_slider_or_update_otsu
 from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder
 from .analysis import cells_analysis
@@ -55,18 +55,22 @@ def _built_widgets():
     for spin in change_id_widget.native.findChildren(QtWidgets.QSpinBox):
         spin.setStyleSheet("font-size: 10pt;")
     new_id_widget = magicgui(
-        lambda: edit_object_id(new_id=None), 
-        call_button="New ID"
+        lambda: edit_object_id(new_id=None),
+        call_button="Auto Assign ID"
     )
 
     view_object_widget = magicgui(
-        add_object_layer, 
-        object_id={"label": "Object ID", "min": 1, "step": 1}, 
+        add_object_layer,
+        object_id={"label": "Object ID", "min": 1, "step": 1},
         call_button="View Object"
     )
     apply_changes_widget = magicgui(
-        sync_object_to_masks, 
+        sync_object_to_masks,
         call_button="Apply Changes"
+    )
+    shrink_mask_widget = magicgui(
+        shrink_mask_to_cd206,
+        call_button="Shrink Mask"
     )
 
     add_roi_widget = magicgui(
@@ -136,6 +140,7 @@ def _built_widgets():
 
     _set_call_button_tooltip(view_object_widget, "[v] View the selected object only in a new layer with name Object {ID}. You can either click on the object to select it or enter the ID manually. The click has a higher priority.")
     _set_call_button_tooltip(apply_changes_widget, "Save changes made on the Object layer back to the Masks layer.")
+    _set_call_button_tooltip(shrink_mask_widget, "Shrink the selected object's mask to fit the real CD206 boundaries. Uses morphological Chan-Vese (region-based active contour) initialised from the current mask — pulls inward where CD206 signal is weak.")
 
     _set_call_button_tooltip(add_roi_widget, "Draw a bounding box on the ROI layer. 3D Otsu segmentation will be automatically applied to the last drawn box, and the result will appear in the Preview Mask layer. You can adjust the threshold using the slider below and rerun Otsu if needed.")
     _set_call_button_tooltip(finalise_3d_widget, "Save the current Otsu segmentation result back to Mask layer.")
@@ -172,6 +177,7 @@ def _built_widgets():
     object_v.addLayout(_row(delete_this_widget.native, delete_all_widget.native))
     object_v.addLayout(_row(change_id_widget.native, new_id_widget.native))
     object_v.addLayout(_row(view_object_widget.native, apply_changes_widget.native))
+    object_v.addLayout(_row(shrink_mask_widget.native))
     object_group.setLayout(object_v)
 
     seg_group = QtWidgets.QGroupBox("Segmentation")
@@ -234,6 +240,20 @@ def _built_widgets():
 
     curr_dock = viewer.window.add_dock_widget(wrapper, area="right", name="Macrophage Tools")
     main_tools_dock = curr_dock
+
+    # Place the tools dock directly below the "Edit CD206+DAPI+Masks" dock
+    try:
+        qt_window = viewer.window._qt_window
+        edit_dock = next(
+            (d for d in qt_window.findChildren(QtWidgets.QDockWidget)
+             if "Edit CD206" in (d.windowTitle() or "") and d is not curr_dock),
+            None
+        )
+        if edit_dock is not None:
+            qt_window.splitDockWidget(edit_dock, curr_dock, QtCore.Qt.Vertical)
+    except Exception:
+        pass
+
     _register_keyboard_shortcuts(viewer)
 
     def _on_tools_destroyed():
@@ -276,10 +296,9 @@ def make_add_layer_from_tif_widget():
 
     layout.addWidget(img_w.native)
     layout.addWidget(mask_w.native)
+    layout.addStretch(1)
     layout.setSpacing(0)
     layout.setContentsMargins(0, 0, 0, 0)
-    layout.setStretch(0, 1)
-    layout.setStretch(1, 1)
 
     load_container.setStyleSheet(_widget_stylesheet())
     return load_container
@@ -306,33 +325,15 @@ def make_run_watershed_for_all_rois_widget():
 
 ###### main function to edit overlay ######
 def edit_overlay_all():
-    """Show CD206 channel overlayed with DAPI channel and masks"""
+    """Open the Macrophage Tools dock. Does not load any data."""
     viewer = napari.current_viewer()
-    _prepare_all_layers(viewer)
-    cd206_images = dataState.cd206_images
-    dapi_images = dataState.dapi_images
-    mask_images = dataState.mask_images
-
-    if "CD206" not in viewer.layers and cd206_images is not None:
-        viewer.add_image(cd206_images, name="CD206", blending="additive")
-    if "DAPI" not in viewer.layers and dapi_images is not None:
-        dapi_layer = viewer.add_image(dapi_images, name="DAPI", blending="additive")
-        dapi_layer.visible = False
-    if "Masks" not in viewer.layers and mask_images is not None:
-        viewer.add_labels(mask_images, name="Masks")
 
     if "Masks" in viewer.layers:
         if select_object not in getattr(viewer.layers["Masks"], "mouse_drag_callbacks", []):
-            viewer.layers["Masks"].mouse_drag_callbacks.append(select_object)  # select_object will be called when user drags mouse
+            viewer.layers["Masks"].mouse_drag_callbacks.append(select_object)
         viewer.layers["Masks"].selected_object_id = None
         viewer.layers["Masks"].click_coords = None
         viewer.layers.selection.clear()
         viewer.layers.selection.add(viewer.layers["Masks"])
-    else:
-        if cd206_images is None:
-            show_warning("Image not loaded")
-            print("Image not loaded")
-        if mask_images is None:
-            show_warning("Mask not loaded")
-            print("Mask not loaded")
+
     _built_widgets()
