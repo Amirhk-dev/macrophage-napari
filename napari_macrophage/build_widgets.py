@@ -8,7 +8,7 @@ from napari.utils.notifications import show_info, show_warning
 from .io import add_image_layer, add_mask_layer, add_layer_from_zarr
 from .edit_mask_image import delete_all, delete_object, edit_object_id, renumber, add_object_layer, sync_object_to_masks, _step_object_in_slice, select_object, interpolate_to_isotropic, shrink_mask_to_cd206
 from .segmentation import run_watershed_for_all_rois, finalise_mask, run_watershed_on_bbox, _create_slider_or_update_otsu, _create_slider_or_update_otsu
-from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder
+from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder, detect_objects_with_onnx
 from .analysis import cells_analysis
 from .ui import _widget_stylesheet, _set_call_button_tooltip
 from .state import dataState, set_voxel_size_um
@@ -103,13 +103,24 @@ def _built_widgets():
     )
 
     export_yolo_widget = magicgui(
-        export_bboxes_to_yolo, 
-        call_button="Export YOLO"
+        export_bboxes_to_yolo,
+        call_button="Export BBs (YOLO)"
     )
     import_yolo_widget = magicgui(
-        import_bboxes_from_yolo_folder, 
-        call_button="Import YOLO"
+        import_bboxes_from_yolo_folder,
+        call_button="Import BBs (YOLO)"
     )
+    detect_onnx_widget = magicgui(
+        detect_objects_with_onnx,
+        call_button="Detect BBs (ONNX)",
+        onnx_path={"label": "ONNX model (.onnx)", "filter": "*.onnx"},
+        confidence_threshold={"label": "Confidence", "min": 0.0, "max": 1.0, "step": 0.05},
+        current_slice_only={"label": "Current slice only"},
+    )
+    for le in detect_onnx_widget.onnx_path.native.findChildren(QtWidgets.QLineEdit):
+        le.setReadOnly(True)
+        le.setText("")
+        le.setPlaceholderText("No model selected")
 
     image_info_widget = magicgui(
         set_voxel_size_um, 
@@ -149,10 +160,9 @@ def _built_widgets():
 
     _set_call_button_tooltip(bboxes_widget, "Draw bounding boxes on the ROI layer. If you want to continue annotating from an existing file, please import the file first before drawing new bounding boxes.")
     _set_call_button_tooltip(gen_bboxes_widget, "Generate bounding boxes from the Masks layer across all slices.")
-    # _set_call_button_tooltip(export_widget, "Export the current bounding boxes to COCO format to a JSON file.")
     _set_call_button_tooltip(export_yolo_widget, "Export the current bounding boxes to YOLO txt files (one file per slice).")
-    # _set_call_button_tooltip(import_widget, "Import bounding boxes from COCO format in JSON file.")
     _set_call_button_tooltip(import_yolo_widget, "Import YOLO txt files from a folder.")
+    _set_call_button_tooltip(detect_onnx_widget, "Run ONNX object detection on all Z slices using CD206 + DAPI (CPU). Results are added to the ROI layer and can be edited or exported like any other bounding box.")
     
     _set_call_button_tooltip(image_info_widget, "Update the voxel size information used for analysis and processing.")
     _set_call_button_tooltip(cells_analysis_widget, "Compute volume and sphericity for each cell based on Masks layer.")
@@ -189,12 +199,13 @@ def _built_widgets():
     seg_v.addLayout(_row(slider_native))
     seg_group.setLayout(seg_v)
 
-    bbox_group = QtWidgets.QGroupBox("Bounding Boxes")
+    bbox_group = QtWidgets.QGroupBox("Bounding Boxes (BBs)")
     bbox_v = QtWidgets.QVBoxLayout()
     bbox_v.setContentsMargins(4, 4, 4, 4)
     bbox_v.setSpacing(4)
     bbox_v.addLayout(_row(bboxes_widget.native, gen_bboxes_widget.native))
     bbox_v.addLayout(_row(export_yolo_widget.native, import_yolo_widget.native))
+    bbox_v.addLayout(_row(detect_onnx_widget.native))
     bbox_group.setLayout(bbox_v)
 
     voxel_group = QtWidgets.QGroupBox("Voxel Size")
@@ -266,23 +277,28 @@ def _built_widgets():
 
 def _make_add_image_layer_widget():
     w = magicgui(
-        add_image_layer, 
-        call_button="Load Image", 
-        image_path={                 
-            "label": "Select image (.tif/.tiff)",
-            "filter": "*.tif *.tiff"
-        })
+        add_image_layer,
+        call_button="Load Image",
+        image_path={"label": "Select image (.tif/.tiff)", "filter": "*.tif *.tiff"},
+        channel_names={"label": "Channel names (comma-separated)", "value": "Collagen, F480, CD206, DAPI, Brightfield"},
+    )
+    for le in w.image_path.native.findChildren(QtWidgets.QLineEdit):
+        le.setReadOnly(True)
+        le.setText("")
+        le.setPlaceholderText("No file selected")
     w.native.setStyleSheet(_widget_stylesheet())
     return w
 
 def _make_add_mask_layer_widget():
     w = magicgui(
-        add_mask_layer, 
+        add_mask_layer,
         call_button="Load Mask",
-        mask_path={
-            "label": "Select mask (.tif/.tiff)",
-            "filter": "*.tif *.tiff"
-        })
+        mask_path={"label": "Select mask (.tif/.tiff)", "filter": "*.tif *.tiff"},
+    )
+    for le in w.mask_path.native.findChildren(QtWidgets.QLineEdit):
+        le.setReadOnly(True)
+        le.setText("")
+        le.setPlaceholderText("No file selected")
     w.native.setStyleSheet(_widget_stylesheet())
     return w
 
