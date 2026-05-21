@@ -450,7 +450,7 @@ def interpolate_to_isotropic():
             mode = "trilinear"
         )
         isotropic_img = isotropic_img.squeeze(0).squeeze(0).numpy()
-        viewer.add_image(isotropic_img, name=f"{curr_layer.name} (iso)", blending="additive")
+        viewer.add_image(isotropic_img, name=f"{curr_layer.name} (iso)", blending="additive", colormap=curr_layer.colormap.name)
     elif curr_layer.name == "Masks":
         mask = viewer.layers["Masks"].data
         mask_torch = torch.from_numpy(mask).to(torch.float64)
