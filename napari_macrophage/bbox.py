@@ -3,6 +3,8 @@ import napari
 import numpy as np
 import re
 
+from pathlib import Path
+from napari.layers import Labels as _Labels
 from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
@@ -28,7 +30,7 @@ def add_roi_layer(run_algo=None):
         return
     
     if "ROI" not in viewer.layers:
-        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="red", face_color="transparent", edge_width=3)
+        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=3)
         curr_z = int(viewer.dims.current_step[0])
         _dummy = np.array([ # to force the layer to store bb of shape (4, 3) 
             [curr_z, 0, 0],
@@ -37,7 +39,7 @@ def add_roi_layer(run_algo=None):
             [curr_z, 0, 0],
         ])
         idx = len(roi_layer.data)
-        roi_layer.add(_dummy, shape_type="rectangle", edge_color="red", face_color="transparent", edge_width=3)
+        roi_layer.add(_dummy, shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=3)
         roi_layer.selected_data = {idx}
         roi_layer.remove_selected()
         if curr_z < viewer.layers["CD206"].data.shape[0] - 1: # simulate a change of slice to force refresh
@@ -89,20 +91,25 @@ def draw_bboxes(*args, **kwargs):
 
 
 def generate_bboxes_from_mask_layer():
-    """Generate per-slice bounding boxes for every label > 0 in the Masks layer and add them to the ROI layer."""
+    """Generate per-slice bounding boxes for every label > 0 in the selected Labels layer (falls back to 'Masks')."""
     viewer = napari.current_viewer()
-    required_layers = ["Masks"]
-    if _layers_not_in_viewer_error(viewer, required_layers):
+
+    active = viewer.layers.selection.active
+    if isinstance(active, _Labels):
+        mask_layer = active
+    elif "Masks" in viewer.layers:
+        mask_layer = viewer.layers["Masks"]
+    else:
+        show_warning("Select a Labels layer or load a Masks layer first.")
         return
 
-    mask_layer = viewer.layers["Masks"]
     data = np.asarray(mask_layer.data)
     if data.ndim != 3:
-        show_warning("Masks layer must be 3D (Z, Y, X)")
+        show_warning("Mask layer must be 3D (Z, Y, X)")
         return
 
     if "ROI" not in viewer.layers:
-        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="red", face_color="transparent", edge_width=2)
+        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
     else:
         roi_layer = viewer.layers["ROI"]
         reply = QMessageBox.question(
@@ -116,7 +123,7 @@ def generate_bboxes_from_mask_layer():
                 viewer.layers.remove(roi_layer)
             except Exception:
                 pass
-            roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="red", face_color="transparent", edge_width=2)
+            roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
     
     Z = int(data.shape[0])
     added = 0
@@ -145,13 +152,13 @@ def generate_bboxes_from_mask_layer():
                     roi_layer.add(
                         curr_bbox, 
                         shape_type="rectangle", 
-                        edge_color="red", 
+                        edge_color="white", 
                         face_color="transparent", 
                         edge_width=2
                     )
                     added += 1
-    show_info(f"Generated {added} bounding boxes from Masks")
-    print(f"Generated {added} bounding boxes from Masks")
+    show_info(f"Generated {added} bounding boxes from {mask_layer.name}")
+    print(f"Generated {added} bounding boxes from {mask_layer.name}")
 
 
 def export_bboxes_to_yolo():
@@ -264,7 +271,7 @@ def import_bboxes_from_yolo_folder():
         roi_layer = viewer.add_shapes(
             name="ROI",
             shape_type="rectangle",
-            edge_color="red",
+            edge_color="white",
             face_color="transparent",
             edge_width=2
         )
@@ -341,7 +348,7 @@ def import_bboxes_from_yolo_folder():
                     roi_layer.add(
                         curr_bbox,
                         shape_type="rectangle",
-                        edge_color="red",
+                        edge_color="white",
                         face_color="transparent",
                         edge_width=2
                     )
@@ -361,3 +368,118 @@ def import_bboxes_from_yolo_folder():
     msg = f"Imported {total_boxes} boxes from {total_files} files in {dir_path}"
     show_info(msg)
     print(msg)
+
+
+def detect_objects_with_onnx(
+    onnx_path: Path = None,
+    confidence_threshold: float = 0.5,
+    current_slice_only: bool = False,
+):
+    """Run ONNX object detection using CD206 (R), zeros (G), DAPI (B) → input shape (1,3,H,W).
+    Detected boxes are added to the ROI shapes layer in the same format as manually drawn boxes."""
+    try:
+        import onnxruntime as ort
+    except ImportError:
+        show_warning("onnxruntime is not installed. Run: pip install onnxruntime")
+        return
+
+    viewer = napari.current_viewer()
+    cd206 = dataState.cd206_images
+    dapi  = dataState.dapi_images
+
+    if cd206 is None or dapi is None:
+        show_warning("Both CD206 and DAPI channels must be loaded before running detection.")
+        return
+
+    if onnx_path is None or not Path(onnx_path).exists():
+        show_warning("Please select a valid ONNX model file.")
+        return
+
+    sess       = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
+    inp_meta   = sess.get_inputs()[0]
+    out_meta   = sess.get_outputs()[0]
+    input_name = inp_meta.name
+    print(f"[ONNX] input  : name={inp_meta.name}  shape={inp_meta.shape}  type={inp_meta.type}")
+    print(f"[ONNX] output : name={out_meta.name}  shape={out_meta.shape}")
+
+    Z, H, W = cd206.shape
+    print(f"[ONNX] image  : Z={Z}  H={H}  W={W}")
+
+    # Normalise channels globally to [0, 1]
+    cd206_norm = cd206.astype(np.float32) / (cd206.max() or 1)
+    dapi_norm  = dapi.astype(np.float32)  / (dapi.max()  or 1)
+    zeros      = np.zeros((H, W), dtype=np.float32)
+
+    z_range = [int(viewer.dims.current_step[0])] if current_slice_only else range(Z)
+
+    if "ROI" not in viewer.layers:
+        roi_layer = viewer.add_shapes(
+            name="ROI", shape_type="rectangle",
+            edge_color="white", face_color="transparent", edge_width=2
+        )
+    else:
+        roi_layer = viewer.layers["ROI"]
+
+    total_boxes = 0
+    blocker = getattr(roi_layer.events.data, "blocker", None)
+
+    def _run():
+        nonlocal total_boxes
+        for i, z in enumerate(z_range):
+            # Input: R=CD206, G=zeros, B=DAPI → (1, 3, H, W)
+            inp = np.stack([cd206_norm[z], zeros, dapi_norm[z]], axis=0)[np.newaxis]
+            raw = sess.run(None, {input_name: inp})[0]
+
+            if i == 0:
+                print(f"[ONNX] raw output shape : {raw.shape}")
+
+            # Normalise output to shape (N, >=5)
+            preds = np.squeeze(raw)
+            if preds.ndim == 1:
+                preds = preds[np.newaxis]
+            if preds.ndim == 2 and preds.shape[0] == 5:
+                preds = preds.T  # (5, N) → (N, 5)
+
+            if i == 0:
+                scores = preds[:, 4] if preds.ndim == 2 and preds.shape[1] >= 5 else np.array([])
+                print(f"[ONNX] detections       : {len(preds)}")
+                if scores.size:
+                    print(f"[ONNX] score range      : {scores.min():.4f} – {scores.max():.4f}  (threshold={confidence_threshold})")
+                    print(f"[ONNX] sample coords (first 3): {preds[:3, :4].tolist()}")
+
+            for det in preds:
+                if len(det) < 5:
+                    continue
+                xc, yc, bw, bh, score = float(det[0]), float(det[1]), float(det[2]), float(det[3]), float(det[4])
+                if score < confidence_threshold:
+                    continue
+                x_min = max(0.0, xc - bw / 2)
+                x_max = min(float(W - 1), xc + bw / 2)
+                y_min = max(0.0, yc - bh / 2)
+                y_max = min(float(H - 1), yc + bh / 2)
+                if x_max <= x_min or y_max <= y_min:
+                    continue
+                rect = np.array([
+                    [z, y_min, x_min],
+                    [z, y_min, x_max],
+                    [z, y_max, x_max],
+                    [z, y_max, x_min],
+                ], dtype=float)
+                roi_layer.add(rect, shape_type="rectangle",
+                              edge_color="white", face_color="transparent", edge_width=2)
+                total_boxes += 1
+
+    if blocker is not None:
+        with roi_layer.events.data.blocker():
+            _run()
+    else:
+        _run()
+
+    # Refresh slice view
+    curr_z = int(viewer.dims.current_step[0])
+    step   = curr_z + 1 if curr_z < Z - 1 else curr_z - 1
+    viewer.dims.set_current_step(0, step)
+    viewer.dims.set_current_step(0, curr_z)
+
+    scope = "current slice" if current_slice_only else f"{Z} slices"
+    show_info(f"Detection complete: {total_boxes} boxes across {scope}.")
