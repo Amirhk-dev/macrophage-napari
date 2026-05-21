@@ -1,6 +1,7 @@
 napari[all]
-magicgui 
-tifffile 
+magicgui
+tifffile
 numpy
 scikit-image
 torch
+onnxruntime
