@@ -14,6 +14,16 @@ from .state import dataState
 from .edit_mask_image import select_object
 
 ###### upload image and mask ######
+
+_KNOWN_COLORMAPS = {
+    "cd206": "red",
+    "dapi": "blue",
+    "collagen": "cyan",
+    "f480": "green",
+}
+_DEFAULT_COLORMAPS = ["magenta", "cyan", "green", "yellow", "gray", "red", "blue"]
+
+
 def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, visible: bool = False):
     if name in viewer.layers:
         viewer.layers[name].data = image
@@ -28,55 +38,55 @@ def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, 
         viewer.dims.current_step = (0, 0)
 
 
-def add_image_layer(image_path: Path = Path("/Users/tianru.li/Desktop/data/image/image_1_with_dapi.tif")):
+def _store_channel_in_state(name: str, data: np.ndarray):
+    key = name.lower()
+    if key == "cd206":
+        dataState.cd206_images = data
+    elif key == "dapi":
+        dataState.dapi_images = data
+    elif key == "collagen":
+        dataState.collagen_images = data
+    elif key in ("f480", "f4/80"):
+        dataState.F480_images = data
+
+
+def add_image_layer(
+    image_path: Path = Path(""),
+    channel_names: str = "Collagen, F480, CD206, DAPI, Brightfield",
+):
     img = tiff.imread(image_path)
-    with_dapi = True
-    if img.ndim == 3:
-        dataState.cd206_images = img
-        with_dapi = False
-    elif img.ndim == 4 and min(img.shape) == 2:
-        min_dim = np.argmin(img.shape)
-        img_reordered = np.moveaxis(img, min_dim, 0)
-        dataState.cd206_images = img_reordered[0]
-        dataState.dapi_images = img_reordered[1]
-    elif img.ndim == 4 and min(img.shape) == 5:
-        print(img.shape)
-        min_dim = np.argmin(img.shape)
-        img_reordered = np.moveaxis(img, min_dim, 0)
-        dataState.cd206_images = img_reordered[2]
-        dataState.dapi_images = img_reordered[3]
-        dataState.collagen_images = img_reordered[0]
-        dataState.F480_images = img_reordered[1]
-        print(img_reordered.shape)
-    # else:
-    #     print(img.shape, img.ndim)
+    names = [n.strip() for n in channel_names.split(",") if n.strip()]
 
     viewer = napari.current_viewer()
-    if dataState.cd206_images is not None:
-        _add_or_update_channel(viewer, dataState.cd206_images, name="CD206", colormap="magenta", visible=True)
-        dataState.file_name = image_path.stem
-        # parts = dataState.file_name.split("_")
-        # dataState.file_name = "_".join(parts[:2])
-        print("file name", dataState.file_name)
+    dataState.file_name = image_path.stem
 
-    if dataState.dapi_images is not None:
-        _add_or_update_channel(viewer, dataState.dapi_images, name="DAPI", colormap="cyan", visible=True)
+    if img.ndim == 3:
+        # Single-channel z-stack (Z, Y, X)
+        ch_name = names[0] if names else "Ch1"
+        colormap = _KNOWN_COLORMAPS.get(ch_name.lower(), "gray")
+        _store_channel_in_state(ch_name, img)
+        _add_or_update_channel(viewer, img, name=ch_name, colormap=colormap, visible=True)
 
-    if dataState.collagen_images is not None:
-        _add_or_update_channel(viewer, dataState.collagen_images, name="Collagen", colormap="blue", visible=False)
+    elif img.ndim == 4:
+        # Multi-channel: channel axis is the smallest dimension
+        ch_axis = int(np.argmin(img.shape))
+        channels = np.moveaxis(img, ch_axis, 0)  # → (C, Z, Y, X)
+        n = channels.shape[0]
+        for i in range(n):
+            ch_name = names[i] if i < len(names) else f"Ch{i + 1}"
+            colormap = _KNOWN_COLORMAPS.get(ch_name.lower(), _DEFAULT_COLORMAPS[i % len(_DEFAULT_COLORMAPS)])
+            visible = ch_name.lower() in ("cd206", "dapi") or (not names and i == 0)
+            _store_channel_in_state(ch_name, channels[i])
+            _add_or_update_channel(viewer, channels[i], name=ch_name, colormap=colormap, visible=visible)
 
-    if dataState.F480_images is not None:
-        _add_or_update_channel(viewer, dataState.F480_images, name="F480", colormap="green", visible=False)
-
-    if with_dapi:
-        msg = f"Loaded macrophage image: {image_path}"
-        show_info(msg)
     else:
-        msg = f"Loaded image without DAPI channel: {image_path}"
-        show_info(msg)
+        show_warning(f"Unsupported image shape: {img.shape}")
+        return
+
+    show_info(f"Loaded {image_path.name} — {img.shape}")
 
 
-def add_mask_layer(mask_path: Path = Path("/Users/tianru.li/Desktop/data/mask/image_1.tif")):
+def add_mask_layer(mask_path: Path = Path("")):
     dataState.mask_path = mask_path
     mask = tiff.imread(mask_path)
     if mask.ndim != 3:
