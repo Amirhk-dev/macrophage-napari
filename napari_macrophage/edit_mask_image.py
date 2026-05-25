@@ -456,7 +456,7 @@ def interpolate_to_isotropic():
         mask_torch = torch.from_numpy(mask).to(torch.float64)
         isotropic_img = F.interpolate(
             mask_torch.unsqueeze(0).unsqueeze(0),
-            size = new_shape, 
+            size = new_shape,
             mode = "nearest"
         )
         isotropic_img = isotropic_img.squeeze(0).squeeze(0).to(torch.int32).numpy()
