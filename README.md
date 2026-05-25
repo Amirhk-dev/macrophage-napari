@@ -5,7 +5,7 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 ---
 
 <div align="center">
-  <img src="docs/3D_generation.gif" alt="Demo" />
+  <img src="docs/3D_generation.gif" width="600" alt="Demo" />
 </div>
 
 ## Features
