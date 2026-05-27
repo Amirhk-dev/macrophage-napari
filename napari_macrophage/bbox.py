@@ -370,13 +370,21 @@ def import_bboxes_from_yolo_folder():
     print(msg)
 
 
+def _default_onnx_path() -> Path | None:
+    """Return the path to the bundled default ONNX model, or None if not present."""
+    p = Path(__file__).parent / "models" / "default_model.onnx"
+    return p if p.exists() else None
+
+
 def detect_objects_with_onnx(
     onnx_path: Path = None,
     confidence_threshold: float = 0.5,
     current_slice_only: bool = False,
 ):
     """Run ONNX object detection using CD206 (R), zeros (G), DAPI (B) → input shape (1,3,H,W).
-    Detected boxes are added to the ROI shapes layer in the same format as manually drawn boxes."""
+    Detected boxes are added to the ROI shapes layer in the same format as manually drawn boxes.
+    If no model is selected, the bundled default model (napari_macrophage/models/default_model.onnx)
+    is used automatically."""
     try:
         import onnxruntime as ort
     except ImportError:
@@ -391,9 +399,20 @@ def detect_objects_with_onnx(
         show_warning("Both CD206 and DAPI channels must be loaded before running detection.")
         return
 
-    if onnx_path is None or not Path(onnx_path).exists():
-        show_warning("Please select a valid ONNX model file.")
-        return
+    # Resolve model path: prefer user-supplied, fall back to bundled default
+    resolved_path: Path | None = None
+    if onnx_path is not None and Path(onnx_path).exists():
+        resolved_path = Path(onnx_path)
+    else:
+        resolved_path = _default_onnx_path()
+        if resolved_path is None:
+            show_warning(
+                "No ONNX model found. Either select a model file or place "
+                "default_model.onnx in napari_macrophage/models/."
+            )
+            return
+        show_info(f"Using bundled default model: {resolved_path.name}")
+    onnx_path = resolved_path
 
     sess       = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     inp_meta   = sess.get_inputs()[0]
@@ -405,9 +424,20 @@ def detect_objects_with_onnx(
     Z, H, W = cd206.shape
     print(f"[ONNX] image  : Z={Z}  H={H}  W={W}")
 
-    # Normalise channels globally to [0, 1]
-    cd206_norm = cd206.astype(np.float32) / (cd206.max() or 1)
-    dapi_norm  = dapi.astype(np.float32)  / (dapi.max()  or 1)
+    # Normalise channels globally to [0, 1] using percentile clipping (0.1–99.9),
+    # matching the MultiChannelYoloDetector preprocessing in the training pipeline.
+    # This is robust to bright outlier pixels that would skew a simple max normalisation.
+    def _pct_norm(arr: np.ndarray, lo_pct: float = 0.1, hi_pct: float = 99.9) -> np.ndarray:
+        lo = float(np.percentile(arr, lo_pct))
+        hi = float(np.percentile(arr, hi_pct))
+        if hi <= lo:                          # degenerate: fall back to min/max
+            lo, hi = float(arr.min()), float(arr.max())
+        if hi <= lo:                          # all-constant array
+            hi = lo + 1.0
+        return np.clip((arr.astype(np.float32) - lo) / (hi - lo + 1e-8), 0.0, 1.0)
+
+    cd206_norm = _pct_norm(cd206)  # percentiles computed over the full z-stack
+    dapi_norm  = _pct_norm(dapi)
     zeros      = np.zeros((H, W), dtype=np.float32)
 
     z_range = [int(viewer.dims.current_step[0])] if current_slice_only else range(Z)

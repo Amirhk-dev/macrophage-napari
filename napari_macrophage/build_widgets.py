@@ -120,7 +120,7 @@ def _built_widgets():
     for le in detect_onnx_widget.onnx_path.native.findChildren(QtWidgets.QLineEdit):
         le.setReadOnly(True)
         le.setText("")
-        le.setPlaceholderText("No model selected")
+        le.setPlaceholderText("Default model (select to override)")
 
     image_info_widget = magicgui(
         set_voxel_size_um, 
