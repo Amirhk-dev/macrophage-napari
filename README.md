@@ -135,3 +135,11 @@ Resample CD206 and Masks so that voxel spacing is isotropic:
 
 ### **7. Save edited masks**
 Please use Napari’s built-in **Save** shortcut on your computer.
+
+---
+
+## Automatic Segmentation Pipeline
+
+For fully automated end-to-end macrophage segmentation (YOLO detection + SAM2 3D segmentation + Cellpose nucleus detection), see the companion pipeline:
+
+👉 **[macrophage-image-processor](https://github.com/Amirhk-dev/macrophage-image-processor)**
