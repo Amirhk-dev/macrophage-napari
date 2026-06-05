@@ -20,22 +20,44 @@ A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed
 
 ## Installation
 
-Install the dependencies and the plugin via pip:
+### With uv (recommended)
 
-with conda:
+```bash
+# install uv if you don't have it
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# install and launch
+uv sync
+uv run napari
+
+# include torch + onnxruntime for isotropic resampling and ONNX detection
+uv sync --extra detection
+uv run napari
+```
+
+### With pip + conda
+
 ```bash
 conda create -n mic_napari python=3.11 -y
 conda activate mic_napari
+pip install napari-macrophage
+napari
 ```
 
-with pip (if not with conda):
+### With pip + venv
+
 ```bash
 python -m venv .mic_napari
 source .mic_napari/bin/activate
+pip install napari-macrophage
+napari
 ```
 
+### For development (editable install)
+
 ```bash
-pip install -r requirements.txt
+uv sync
+# or
 pip install -e .
 ```
 
