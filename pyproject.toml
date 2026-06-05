@@ -1,3 +1,48 @@
 [build-system]
 requires = ["setuptools", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[project]
+name = "napari-macrophage"
+version = "0.0.3"
+description = "A napari plugin for interactive 3D macrophage image analysis: mask editing, Otsu/Watershed segmentation, YOLO bbox export, and morphology analysis."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [
+    { name = "Amirhossein Kardoost", email = "kardoostamirhossein@gmail.com" },
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Framework :: napari",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+    "napari[all]",
+    "magicgui",
+    "tifffile",
+    "numpy",
+    "scikit-image",
+]
+
+[project.optional-dependencies]
+detection = [
+    "torch",
+    "onnxruntime",
+]
+
+[project.entry-points."napari.manifest"]
+napari-macrophage = "napari_macrophage:napari.yaml"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+napari_macrophage = [
+    "napari.yaml",
+    "models/*.onnx",
+]
