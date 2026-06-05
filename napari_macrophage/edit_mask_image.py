@@ -7,8 +7,6 @@ from skimage.filters import threshold_otsu
 from .error import _layers_not_in_viewer_error
 from .state import dataState
 from .analysis import cells_analysis
-import torch
-import torch.nn.functional as F
 
 ###### selection ######
 def select_object(layer, event): # callback function
@@ -422,6 +420,12 @@ def _step_object_in_slice(delta: int):
 
 ##### Interpolate image #####
 def interpolate_to_isotropic():
+    try:
+        import torch
+        import torch.nn.functional as F
+    except ImportError:
+        show_warning("Isotropic resampling requires torch. Install it with: pip install napari-macrophage[detection]")
+        return
     if not dataState.voxel_size_um:
         show_warning("Voxel size is not set yet. Please set voxel size first.")
         return
