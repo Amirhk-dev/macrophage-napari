@@ -1,5 +1,10 @@
 # napari-macrophage
 
+[![PyPI](https://img.shields.io/pypi/v/napari-macrophage)](https://pypi.org/project/napari-macrophage/)
+[![Python Version](https://img.shields.io/pypi/pyversions/napari-macrophage)](https://pypi.org/project/napari-macrophage/)
+[![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/Amirhk-dev/macrophage-napari/blob/main/LICENSE)
+[![napari hub](https://img.shields.io/badge/napari%20hub-napari--macrophage-blue)](https://napari-hub.org/plugins/napari-macrophage)
+
 A Napari plugin for macrophage image visualisation, mask editing, Otsu/Watershed segmentation, YOLO-format bbox export/import, and cell analysis.
 
 ---
