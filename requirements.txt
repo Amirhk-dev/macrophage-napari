@@ -1,7 +1,0 @@
-napari[all]
-magicgui
-tifffile
-numpy
-scikit-image
-torch
-onnxruntime
