@@ -34,6 +34,11 @@ detection = [
     "torch",
     "onnxruntime",
 ]
+api = [
+    "fastapi[standard]",
+    "onnxruntime",
+    "python-multipart",
+]
 
 [project.entry-points."napari.manifest"]
 napari-macrophage = "napari_macrophage:napari.yaml"
