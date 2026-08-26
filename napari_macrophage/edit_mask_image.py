@@ -1,6 +1,6 @@
 import numpy as np
 import napari
-from napari.utils.notifications import show_info, show_warning
+from napari.utils.notifications import show_info, show_warning, show_error
 from scipy.ndimage import label, binary_fill_holes, gaussian_filter
 from skimage.filters import threshold_otsu
 
@@ -159,6 +159,11 @@ def edit_object_id(new_id: int=None):
                 layer_slice[labelled_mask_slice == target_label] = new_id 
             else:
                 max_id = layer.data.max()
+                if max_id >= 255:
+                    msg = "Cannot assign a new ID: the mask is stored as uint8 and already has 255 objects (maximum)."
+                    show_error(msg)
+                    print(msg)
+                    return
                 new_id = max_id + 1
                 layer_slice[labelled_mask_slice == target_label] = new_id
 
