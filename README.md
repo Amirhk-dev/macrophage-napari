@@ -8,7 +8,16 @@
 A napari plugin for interactive 3D macrophage image analysis — mask editing, Otsu/Watershed segmentation, YOLO bounding box export, and morphology analysis.
 
 <div align="center">
-  <img src="docs/3D_generation.gif" width="600" alt="Demo" />
+  <table>
+    <tr>
+      <td align="center"><img src="docs/3D_generation.gif" width="500" alt="Demo" /></td>
+      <td align="center"><img src="docs/3D_rendered_sample.png" width="300" alt="3D rendered macrophage" /></td>
+    </tr>
+    <tr>
+      <td align="center"><em>3D segmentation of macrophages overlaid with the volume</em></td>
+      <td align="center"><em>3D rendering of a single macrophage</em></td>
+    </tr>
+  </table>
 </div>
 
 ## Features
@@ -20,6 +29,7 @@ A napari plugin for interactive 3D macrophage image analysis — mask editing, O
 - Annotate and export/import bounding boxes in YOLO `.txt` format
 - Per-object morphology analysis: volume, surface area, sphericity → CSV export
 - Isotropic resampling of image and mask
+- 3D rendering of individual macrophages (smoothed surface mesh, adjustable shading, black/white background, PNG screenshot, mesh export to STL/OBJ/PLY)
 
 ## Installation
 
@@ -48,7 +58,8 @@ napari
 2. **Edit masks** — Plugins → napari-macrophage → Edit CD206 + DAPI + Masks
 3. **Segment** — Draw ROI bbox → Otsu preview → Save or Run Watershed
 4. **Detect** — Run ONNX detection on CD206 + DAPI slices
-5. **Export** — YOLO `.txt` bounding boxes or morphology `.csv`
+5. **Render 3D** — In the *3D Visualization* panel, enter an Object ID and click *Generate 3D* to open the macrophage in a new window; save a PNG or export the mesh (STL/OBJ/PLY) from that window
+6. **Export** — YOLO `.txt` bounding boxes or morphology `.csv`
 
 Input shape: `(Z, Y, X)` for grayscale, `(C, Z, Y, X)` for multi-channel (C ∈ {2, 5}).
 
