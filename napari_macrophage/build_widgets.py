@@ -10,6 +10,7 @@ from .edit_mask_image import delete_all, delete_object, edit_object_id, renumber
 from .segmentation import run_watershed_for_all_rois, finalise_mask, run_watershed_on_bbox, _create_slider_or_update_otsu, _create_slider_or_update_otsu
 from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder, detect_objects_with_onnx
 from .analysis import cells_analysis
+from .visualize_3d import visualize_macrophage_3d
 from .ui import _widget_stylesheet, _set_call_button_tooltip
 from .state import dataState, set_voxel_size_um
 from .io import _prepare_all_layers
@@ -138,9 +139,25 @@ def _built_widgets():
         call_button="Interpolate to Isotropic"
     )
     renumber_widget = magicgui(
-        renumber, 
+        renumber,
         call_button="Renumber All"
     )
+
+    visualize_3d_widget = magicgui(
+        visualize_macrophage_3d,
+        object_id={"label": "Object ID", "min": 1, "step": 1},
+        smooth_iter={"label": "Smoothing iterations", "min": 0, "max": 500, "step": 5},
+        pre_smooth_sigma={"label": "Pre-smooth sigma", "min": 0.0, "max": 3.0, "step": 0.1},
+        taper_ends={"label": "Round ends (taper)"},
+        shading={"label": "Shading", "choices": ["smooth", "flat", "none"]},
+        crop_to_object={"label": "Crop & center (µm)"},
+        background={"label": "Background", "choices": ["black", "white"]},
+        call_button="Generate 3D",
+    )
+    for spin in visualize_3d_widget.native.findChildren(QtWidgets.QSpinBox):
+        spin.setStyleSheet("font-size: 10pt;")
+    for spin in visualize_3d_widget.native.findChildren(QtWidgets.QDoubleSpinBox):
+        spin.setStyleSheet("font-size: 10pt;")
 
 
     _set_call_button_tooltip(delete_this_widget, "[d] Delete the selected connected component in the current slice.")
@@ -168,6 +185,8 @@ def _built_widgets():
     _set_call_button_tooltip(cells_analysis_widget, "Compute volume and sphericity for each cell based on Masks layer.")
     _set_call_button_tooltip(interpolate_widget, "Interpolate the current image/mask layer to isotropic voxel size.")
     _set_call_button_tooltip(renumber_widget, "Renumber all objects to consecutive IDs by their first appearance in the image.")
+
+    _set_call_button_tooltip(visualize_3d_widget, "Generate a smoothed 3D surface mesh for the selected object ID and open it in a NEW napari window. Each generation gets its own isolated 3D view. When 'Crop & center' is on, the mesh is centered at the origin (physical µm scale preserved — different objects remain comparable). An 'Export Mesh' button appears inside the new window for saving as STL/OBJ/PLY.")
 
     def _row(*widgets: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout: # set horizontal layout 
         r = QtWidgets.QHBoxLayout()
@@ -227,12 +246,24 @@ def _built_widgets():
         ap_v.addWidget(w)
     analysis_processing_group.setLayout(ap_v)
 
+    visualize_3d_group = QtWidgets.QGroupBox("3D Visualization")
+    v3d_v = QtWidgets.QVBoxLayout()
+    v3d_v.setContentsMargins(4, 4, 4, 4)
+    v3d_v.setSpacing(4)
+    for w in [visualize_3d_widget.native]:
+        layout = w.layout()
+        if layout is not None:
+            layout.setContentsMargins(4, 4, 4, 4)
+            layout.setSpacing(4)
+        v3d_v.addWidget(w)
+    visualize_3d_group.setLayout(v3d_v)
+
     # scrollable root container
     content = QtWidgets.QWidget()
     root = QtWidgets.QVBoxLayout(content)
     root.setContentsMargins(4, 4, 4, 4)
     root.setSpacing(4)
-    for g in (object_group, seg_group, bbox_group, voxel_group, analysis_processing_group):
+    for g in (object_group, seg_group, bbox_group, voxel_group, analysis_processing_group, visualize_3d_group):
         g.setStyleSheet(local_style)
         root.addWidget(g)
     root.addStretch(1)
