@@ -24,6 +24,16 @@ _KNOWN_COLORMAPS = {
 _DEFAULT_COLORMAPS = ["magenta", "cyan", "green", "yellow", "gray", "red", "blue"]
 
 
+def _set_zyx_axis_labels(viewer):
+    """Label the viewer axes 'Z', 'Y', 'X' so the slider shows 'Z' instead of '-3'."""
+    try:
+        n = viewer.dims.ndim
+        labels = ["Z", "Y", "X"][-n:] if n <= 3 else [f"D{i}" for i in range(n - 3)] + ["Z", "Y", "X"]
+        viewer.dims.axis_labels = tuple(labels)
+    except Exception:
+        pass
+
+
 def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, visible: bool = False):
     if name in viewer.layers:
         viewer.layers[name].data = image
@@ -35,7 +45,9 @@ def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, 
             colormap=colormap
         )
         layer.visible = visible
-        viewer.dims.current_step = (0, 0)
+        if viewer.dims.ndim >= 1:
+            viewer.dims.set_current_step(0, 0)
+            _set_zyx_axis_labels(viewer)
 
 
 def _store_channel_in_state(name: str, data: np.ndarray):
@@ -101,7 +113,9 @@ def add_mask_layer(mask_path: Path = Path("")):
         viewer.layers["Masks"].data = dataState.mask_images
     else:
         viewer.add_labels(dataState.mask_images, name="Masks")
-        viewer.dims.current_step = (0,)
+        if viewer.dims.ndim >= 1:
+            viewer.dims.set_current_step(0, 0)
+            _set_zyx_axis_labels(viewer)
     if select_object not in getattr(viewer.layers["Masks"], "mouse_drag_callbacks", []):
         viewer.layers["Masks"].mouse_drag_callbacks.append(select_object)
     if not hasattr(viewer.layers["Masks"], "selected_object_id"):
