@@ -161,6 +161,35 @@ def _laplacian_smooth(verts, faces, n_iter=50, relaxation=0.1):
     return v.astype(np.float32)
 
 
+def _keep_largest_mesh_component(verts, faces):
+    """Return only the largest connected component of a triangle mesh."""
+    if len(faces) == 0 or len(verts) == 0:
+        return verts, faces
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    n = len(verts)
+    a = faces[:, [0, 1, 2]].ravel()
+    b = faces[:, [1, 2, 0]].ravel()
+    adj = coo_matrix((np.ones(a.size, np.int8), (a, b)), shape=(n, n))
+    n_comp, labels = connected_components(adj, directed=False)
+    if n_comp <= 1:
+        return verts, faces
+
+    counts = np.bincount(labels)
+    keep_label = int(counts.argmax())
+    vert_mask = labels == keep_label
+    face_mask = vert_mask[faces].all(axis=1)
+
+    kept_idx = np.where(vert_mask)[0]
+    remap = np.full(n, -1, dtype=np.int64)
+    remap[kept_idx] = np.arange(kept_idx.size)
+
+    new_verts = verts[kept_idx].astype(verts.dtype, copy=False)
+    new_faces = remap[faces[face_mask]].astype(faces.dtype, copy=False)
+    return new_verts, new_faces
+
+
 def _fill_holes_pyvista(verts, faces, hole_size=1e9):
     """Seal small surface holes via PyVista, if it is installed.
 
@@ -199,6 +228,7 @@ def mesh_from_binary(vol_bin,
                      taper_max_iters=5,
                      taper_disk_radius=2,
                      taper_max_fraction=0.5,
+                     keep_largest_only=False,
                      flip_y=False,
                      return_origin=False):
     """Build a triangular surface mesh from a binary volume.
@@ -252,6 +282,18 @@ def mesh_from_binary(vol_bin,
         if not vol.any():
             return None
 
+    # Taper (or an already-fragmented label) can leave multiple 3D components.
+    # Keep only the largest so we render a single object.
+    if keep_largest_only:
+        from scipy.ndimage import label as _cc_label
+        labeled, n_comps = _cc_label(vol)
+        if n_comps > 1:
+            counts = np.bincount(labeled.ravel())
+            counts[0] = 0  # background
+            vol = labeled == int(counts.argmax())
+            if not vol.any():
+                return None
+
     # If the object is cut off by the stack boundary, extend it by one slice so
     # marching cubes closes the surface instead of leaving an open rim.
     if cap_ends:
@@ -293,6 +335,13 @@ def mesh_from_binary(vol_bin,
     )
     verts = verts.astype(np.float32)
     faces = faces.astype(np.int64)
+
+    # Marching cubes on a Gaussian-blurred volume can leave floating iso-surface
+    # fragments even when the input voxels form one component. Drop them.
+    if keep_largest_only:
+        verts, faces = _keep_largest_mesh_component(verts, faces)
+        if len(faces) == 0:
+            return None
 
     if fill_mesh_holes:
         verts, faces = _fill_holes_pyvista(verts, faces, hole_size)

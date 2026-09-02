@@ -5,6 +5,7 @@ import napari
 import numpy as np
 from napari.utils.notifications import show_error, show_info, show_warning
 from qtpy import QtWidgets
+from qtpy.QtCore import QTimer
 from qtpy.QtWidgets import QApplication
 
 from .error import _layers_not_in_viewer_error
@@ -13,6 +14,24 @@ from .state import get_voxel_size_um
 
 
 LAYER_PREFIX = "3D Object"
+
+
+def _dismiss_notifications_after(timeout_ms: int = 3000) -> None:
+    """Close any open napari notification popups after ``timeout_ms``."""
+    try:
+        from napari._qt.dialogs.qt_notification import NapariQtNotification
+    except Exception:
+        return
+
+    def _close():
+        for w in QApplication.topLevelWidgets():
+            if isinstance(w, NapariQtNotification):
+                try:
+                    w.close()
+                except Exception:
+                    pass
+
+    QTimer.singleShot(int(timeout_ms), _close)
 
 
 def _layer_name(object_id: int) -> str:
@@ -158,8 +177,8 @@ def visualize_macrophage_3d(
         return
 
     voxel = get_voxel_size_um()
-    if voxel is None:
-        show_warning("Voxel size is not set. Please set voxel size first.")
+    if voxel is None or any(float(v) <= 0.0 for v in voxel):
+        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first.")
         return
 
     mask = np.asarray(main_viewer.layers["Masks"].data)
@@ -180,6 +199,7 @@ def visualize_macrophage_3d(
         cap_ends=True,
         fill_mesh_holes=True,
         resample_isotropic=True,
+        keep_largest_only=True,
     )
     if result is None:
         show_error(f"Could not build mesh for object {object_id} (empty after preprocessing).")
@@ -231,5 +251,6 @@ def visualize_macrophage_3d(
         f"{len(verts)} vertices, {len(faces)} faces, "
         f"extent {extent_um[2]:.1f}×{extent_um[1]:.1f}×{extent_um[0]:.1f} µm (X×Y×Z)."
     )
+    _dismiss_notifications_after(3000)
 
 
