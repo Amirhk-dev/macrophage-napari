@@ -11,7 +11,7 @@ from .segmentation import run_watershed_for_all_rois, finalise_mask, run_watersh
 from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder, detect_objects_with_onnx
 from .analysis import cells_analysis
 from .visualize_3d import visualize_macrophage_3d
-from .ui import _widget_stylesheet, _set_call_button_tooltip
+from .ui import _widget_stylesheet, _set_call_button_tooltip, _disable_wheel_on_inputs
 from .state import dataState, set_voxel_size_um
 from .io import _prepare_all_layers
 
@@ -125,9 +125,9 @@ def _built_widgets():
 
     image_info_widget = magicgui(
         set_voxel_size_um, 
-        voxel_x={"label": "Voxel size X [µm]"},
-        voxel_y={"label": "Voxel size Y [µm]"},
-        voxel_z={"label": "Voxel size Z [µm]"},
+        voxel_x={"label": "Pixel size X [µm]"},
+        voxel_y={"label": "Pixel size Y [µm]"},
+        voxel_z={"label": "Pixel size Z [µm]"},
         call_button="Update Voxel Size"
     )
     cells_analysis_widget = magicgui(
@@ -279,6 +279,7 @@ def _built_widgets():
     wl.setSpacing(0)
     wl.addWidget(scroll)
     wrapper.setStyleSheet(local_style)
+    _disable_wheel_on_inputs(wrapper)
 
     curr_dock = viewer.window.add_dock_widget(wrapper, area="right", name="Macrophage Tools")
     main_tools_dock = curr_dock
@@ -348,15 +349,17 @@ def make_add_layer_from_tif_widget():
     layout.setContentsMargins(0, 0, 0, 0)
 
     load_container.setStyleSheet(_widget_stylesheet())
+    _disable_wheel_on_inputs(load_container)
     return load_container
 
 def make_add_layer_from_zarr_widget():
     w = magicgui(
-        add_layer_from_zarr, 
-        folder={"label": "Zarr folder", "mode": "d"}, 
+        add_layer_from_zarr,
+        folder={"label": "Zarr folder", "mode": "d"},
         call_button="Load Zarr"
     )
     w.native.setStyleSheet(_widget_stylesheet())
+    _disable_wheel_on_inputs(w)
     return w
 
 def make_edit_overlay_all_widget():
