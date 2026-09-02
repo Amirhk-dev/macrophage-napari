@@ -425,54 +425,43 @@ def _step_object_in_slice(delta: int):
 
 ##### Interpolate image #####
 def interpolate_to_isotropic():
-    try:
-        import torch
-        import torch.nn.functional as F
-    except ImportError:
-        show_warning("Isotropic resampling requires torch. Install it with: pip install napari-macrophage[detection]")
-        return
-    if not dataState.voxel_size_um:
-        show_warning("Voxel size is not set yet. Please set voxel size first.")
-        return
-    old_voxel_size = dataState.voxel_size_um
-    old_shape = dataState.cd206_images.shape
-    physical_size = [old_shape[i]*old_voxel_size[i] for i in range(dataState.cd206_images.ndim)]
+    from scipy.ndimage import zoom
 
-    new_voxel_size = min(old_voxel_size)
-    new_shape = [int(round(physical_size[i]/new_voxel_size)) for i in range(dataState.cd206_images.ndim)]
+    if not dataState.voxel_size_um or any(float(v) <= 0.0 for v in dataState.voxel_size_um):
+        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first.")
+        return
 
     viewer = napari.current_viewer()
-    curr_layer = viewer.layers.selection.active
     n_active_layers = len(viewer.layers.selection)
     if n_active_layers != 1:
         show_warning("Please select only one layer (CD206/Mask/DAPI) to interpolate")
         return
-    if curr_layer.name == "CD206" or curr_layer.name == "DAPI":
-        if curr_layer.name == "CD206":
-            image = dataState.cd206_images
-        elif curr_layer.name == "DAPI":
-            image = dataState.dapi_images
-        image_torch = torch.from_numpy(image).to(torch.float64)  # convert ndarray to tensor, cast to float64
-        isotropic_img = F.interpolate(
-            image_torch.unsqueeze(0).unsqueeze(0), # add batch and channel dims [1,1,Z,H,W]
-            size = new_shape, # output spatial size
-            mode = "trilinear"
-        )
-        isotropic_img = isotropic_img.squeeze(0).squeeze(0).numpy()
-        viewer.add_image(isotropic_img, name=f"{curr_layer.name} (iso)", blending="additive", colormap=curr_layer.colormap.name)
-    elif curr_layer.name == "Masks":
-        mask = viewer.layers["Masks"].data
-        mask_torch = torch.from_numpy(mask).to(torch.float64)
-        isotropic_img = F.interpolate(
-            mask_torch.unsqueeze(0).unsqueeze(0),
-            size = new_shape,
-            mode = "nearest"
-        )
-        isotropic_img = isotropic_img.squeeze(0).squeeze(0).to(torch.int32).numpy()
-        viewer.add_labels(isotropic_img, name="Masks (iso)", blending="additive")
-    else:
+    curr_layer = viewer.layers.selection.active
+    if curr_layer.name not in ("CD206", "DAPI", "Masks"):
         show_warning("Please select either CD206, DAPI or Masks layer to interpolate")
         return
+
+    data = np.asarray(curr_layer.data)
+    if data.ndim != 3:
+        show_warning(f"Selected layer has shape {data.shape}; expected 3D (Z, Y, X).")
+        return
+
+    old_voxel_size = dataState.voxel_size_um  # (z, y, x)
+    new_voxel_size = min(old_voxel_size)
+    zoom_factors = [old_voxel_size[i] / new_voxel_size for i in range(3)]
+
+    if curr_layer.name == "Masks":
+        # Nearest-neighbour preserves label IDs.
+        iso = zoom(data, zoom=zoom_factors, order=0, mode="nearest").astype(data.dtype, copy=False)
+        viewer.add_labels(iso, name="Masks (iso)")
+    else:
+        iso = zoom(data.astype(np.float32, copy=False), zoom=zoom_factors, order=1, mode="nearest")
+        viewer.add_image(
+            iso,
+            name=f"{curr_layer.name} (iso)",
+            blending="additive",
+            colormap=curr_layer.colormap.name,
+        )
 
 
 ##### Shrink mask to CD206 + DAPI boundaries (current slice only) #####
