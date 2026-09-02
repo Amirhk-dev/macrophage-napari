@@ -51,3 +51,27 @@ def _set_call_button_tooltip(mg_widget, text: str):
         btns[0].setWhatsThis(text)
     else:
         native.setToolTip(text)
+
+
+class _NoWheelFilter(QtCore.QObject):
+    """Event filter that eats wheel events so scrolling doesn't change values."""
+
+    def eventFilter(self, obj, event):
+        if event.type() == QtCore.QEvent.Wheel:
+            event.ignore()
+            return True
+        return False
+
+
+_no_wheel_filter = _NoWheelFilter()
+
+
+def _disable_wheel_on_inputs(widget):
+    """Prevent mouse-wheel from changing spinbox/combobox values inside ``widget``."""
+    native = widget.native if hasattr(widget, "native") else widget
+    for w in native.findChildren(QtWidgets.QAbstractSpinBox):
+        w.setFocusPolicy(QtCore.Qt.StrongFocus)
+        w.installEventFilter(_no_wheel_filter)
+    for w in native.findChildren(QtWidgets.QComboBox):
+        w.setFocusPolicy(QtCore.Qt.StrongFocus)
+        w.installEventFilter(_no_wheel_filter)
