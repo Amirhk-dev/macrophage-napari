@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "napari-macrophage"
-version = "0.0.4"
+version = "0.0.5"
 description = "A napari plugin for interactive 3D macrophage image analysis: mask editing, Otsu/Watershed segmentation, YOLO bbox export, and morphology analysis."
 readme = "README.md"
 license = "Apache-2.0"
