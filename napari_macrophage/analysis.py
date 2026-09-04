@@ -11,8 +11,9 @@ from .ui import _widget_stylesheet
 
 
 ###### show cell analysis ######
-def _compute_volume(voxel_x: float, voxel_y: float, voxel_z: float, mask_3d: np.ndarray):
-    voxel_volume = float(voxel_z) * float(voxel_y) * float(voxel_x)
+# voxel arguments are in ZYX order to match state.voxel_size_um = (dz, dy, dx).
+def _compute_volume(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
+    voxel_volume = float(dz) * float(dy) * float(dx)
 
     labels = np.unique(mask_3d)
     labels = labels[labels != 0]
@@ -25,9 +26,9 @@ def _compute_volume(voxel_x: float, voxel_y: float, voxel_z: float, mask_3d: np.
     return volume_stats
 
 
-def _compute_sphericity(voxel_x: float, voxel_y: float, voxel_z: float, mask_3d: np.ndarray):
+def _compute_sphericity(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
     """ Ψ = (pi^1/3 * (6V)^2/3) / A"""
-    voxel_volume = float(voxel_z) * float(voxel_y) * float(voxel_x)
+    voxel_volume = float(dz) * float(dy) * float(dx)
 
     labels = np.unique(mask_3d)
     labels = labels[labels != 0]
@@ -49,7 +50,8 @@ def _compute_sphericity(voxel_x: float, voxel_y: float, voxel_z: float, mask_3d:
             sphericity_stats[int(label)] = 0.0
             continue
         try:
-            verts, faces, _, _ = measure.marching_cubes(sub, spacing=(voxel_z, voxel_y, voxel_x)) # find 2D surface mesh from a 3D volume
+            # sub axes are (Z, Y, X) so spacing must be (dz, dy, dx).
+            verts, faces, _, _ = measure.marching_cubes(sub, spacing=(dz, dy, dx))
             A = float(measure.mesh_surface_area(verts, faces)) # compute surface area, given vertices and triangular faces
             if A <= 0:
                 sphericity = 0.0
@@ -119,14 +121,16 @@ def cells_analysis(*args, **kwargs):
     layout.addLayout(btns)
 
     def _save_csv():
+        default_name = (dataState.file_name or "cells") + "_cell_analysis"
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
-            dlg, "Save Cells Analysis", dataState.file_name+"_cell_analysis", "CSV Files (*.csv);;All Files (*)"
+            dlg, "Save Cells Analysis", default_name, "CSV Files (*.csv);;All Files (*)"
         ) # QtWidgets.QFileDialog.getSaveFileName(parent, caption, directory, filter)
         if not path:
             return
         try:
             with open(path, "w", encoding="utf-8") as f:
-                f.write("Label ID, Volume [\u00B5m3], Sphericity [-], Surface Area [\u00B5m2], Note\n")
+                # Column order must match the row layout below (and the on-screen table).
+                f.write("Label ID, Volume [\u00B5m3], Surface Area [\u00B5m2], Sphericity [-], Note\n")
                 for lid in labels:
                     v = vol.get(lid, 0.0)
                     a = surface_area.get(lid, 0.0)

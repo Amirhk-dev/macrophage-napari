@@ -13,7 +13,7 @@ class DataState:
     mask_path: Path | None = None
     # mask_layer: Napari_Labels | None = None # store mask layer object
     file_name: str | None = None
-    voxel_size_um: tuple[float, float, float] | None = None  # (x, y, z) in µm
+    voxel_size_um: tuple[float, float, float] | None = None  # (z, y, x) in µm
 
 dataState = DataState()
 

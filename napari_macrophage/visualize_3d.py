@@ -79,11 +79,54 @@ def _write_stl(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
 
 
 def _set_canvas_bg(viewer, color: str) -> None:
-    """Set viewer canvas background color (best-effort across napari versions)."""
+    """Set viewer canvas background color (best-effort across napari versions).
+
+    napari's ``_qt_viewer.canvas`` is a ``VispyCanvas`` wrapper in 0.5+; setting
+    ``bgcolor`` on the wrapper is a no-op on some versions. Try the wrapper, its
+    underlying vispy ``SceneCanvas``, and ``background_color_override``, then
+    force a redraw.
+    """
     try:
-        viewer.window._qt_viewer.canvas.bgcolor = color
-    except Exception as e:
-        show_warning(f"Could not change background color: {e}")
+        from vispy.color import Color
+        col = Color(color)
+    except Exception:
+        col = color
+
+    qt_viewer = getattr(viewer.window, "_qt_viewer", None) or getattr(
+        viewer.window, "qt_viewer", None
+    )
+    canvas = getattr(qt_viewer, "canvas", None) if qt_viewer is not None else None
+    if canvas is None:
+        show_warning("Could not access the 3D canvas to change background color.")
+        return
+
+    scene_canvas = getattr(canvas, "_scene_canvas", None)
+
+    set_ok = False
+    for target in (scene_canvas, canvas):
+        if target is None:
+            continue
+        try:
+            target.bgcolor = col
+            set_ok = True
+        except Exception:
+            continue
+
+    try:
+        canvas.background_color_override = color
+        set_ok = True
+    except Exception:
+        pass
+
+    if not set_ok:
+        show_warning(f"Could not change background color to {color}.")
+        return
+
+    for target in (scene_canvas, canvas):
+        try:
+            target.update()
+        except Exception:
+            continue
 
 
 def _screenshot_viewer(viewer) -> None:

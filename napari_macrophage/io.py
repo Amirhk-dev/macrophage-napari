@@ -202,9 +202,7 @@ def _load_image_mask_from_zarr_group(viewer, root):
                                 face_color="transparent",
                                 edge_width=2
                             )
-            # print("data",data)
-            # print("roi data", roi_layer.data)
-            show_info(f"Imported {data.shape[0]} ROIs from zarr")
+                show_info(f"Imported {data.shape[0]} ROIs from zarr")
 
     return dataState.cd206_images, dataState.dapi_images, dataState.mask_images
 

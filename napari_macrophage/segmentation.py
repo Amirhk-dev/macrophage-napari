@@ -41,6 +41,20 @@ def _get_otsu_state(viewer) -> OtsuState:
     state = getattr(img_layer, key)
     return state
 
+def _ensure_dtype_for_max(arr: np.ndarray, max_value: int) -> np.ndarray:
+    """Return arr promoted to a large-enough unsigned integer dtype for max_value.
+
+    Prevents silent overflow when the number of labels grows past the current
+    dtype's range (e.g. adding new IDs past 255 to a uint8 label array).
+    """
+    if max_value <= np.iinfo(arr.dtype).max:
+        return arr
+    for dtype in (np.uint16, np.uint32, np.uint64):
+        if max_value <= np.iinfo(dtype).max:
+            return arr.astype(dtype)
+    return arr
+
+
 def _compute_iou(bin_mask1, bin_mask2):
     intersection = np.logical_and(bin_mask1, bin_mask2).sum()
     union = np.logical_or(bin_mask1, bin_mask2).sum()
@@ -133,8 +147,12 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
     mask_exist_slices = np.where(mask_exist_slices)[0]
     # print("111", mask_exist_slices+state.last_bbox_z)
 
+    if mask_exist_slices.size == 0:
+        show_warning("No pixels above the current threshold — nothing to preview.")
+        return
+
     # continuity check
-    num_track_frame = 3      
+    num_track_frame = 3
     valid_slices = [mask_exist_slices[0]]
     for prev, curr in zip(mask_exist_slices, mask_exist_slices[1:]):
         if curr-prev <= num_track_frame:
@@ -401,6 +419,7 @@ def finalise_mask(do_3d=True, use_watershed=False):
 
         if otsu_mask.sum() > 0:
             mask_data = viewer.layers["Masks"].data.copy()
+            mask_data = _ensure_dtype_for_max(mask_data, int(max_object_id) + 1)
             mask_data[state.last_bbox_z][otsu_mask==1] = max_object_id+1
             viewer.layers["Masks"].data = mask_data
 
@@ -462,13 +481,18 @@ def finalise_mask(do_3d=True, use_watershed=False):
         if otsu_mask_3d.sum() > 0:
             mask_data = viewer.layers["Masks"].data.copy()
             if not use_watershed:
+                mask_data = _ensure_dtype_for_max(mask_data, int(max_object_id) + 1)
                 mask_data[otsu_mask_3d==1] = max_object_id+1
                 msg = f"Added new object {max_object_id+1} on slices {mask_exist_slices} using Otsu's method"
                 show_info(msg)
-                print(msg) 
+                print(msg)
             else:
-                watershed_mask_3d = otsu_mask_3d.copy()
-                watershed_mask_3d[watershed_mask_3d > 0] += max_object_id
+                n_ws_labels = int(otsu_mask_3d.max())
+                target_max = int(max_object_id) + n_ws_labels
+                mask_data = _ensure_dtype_for_max(mask_data, target_max)
+                # Promote the watershed labels too so max_object_id + label doesn't overflow.
+                watershed_mask_3d = otsu_mask_3d.astype(mask_data.dtype, copy=True)
+                watershed_mask_3d[watershed_mask_3d > 0] += mask_data.dtype.type(max_object_id)
                 mask_data[watershed_mask_3d > 0] = watershed_mask_3d[watershed_mask_3d > 0]
                 msg = f"Added new objects {max_object_id+1}-{watershed_mask_3d.max()} on slices {mask_exist_slices} using Watershed"
                 show_info(msg)
@@ -588,6 +612,8 @@ def run_watershed_for_all_rois():
                 if lbl == 0:
                     continue
                 binmask = (ws == lbl)
+                if next_id > np.iinfo(mask_data.dtype).max:
+                    mask_data = _ensure_dtype_for_max(mask_data, next_id)
                 mask_data_slice = mask_data[curr_slice_idx:]
                 mask_data_slice[binmask] = next_id
                 mask_data[curr_slice_idx:] = mask_data_slice

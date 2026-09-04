@@ -58,8 +58,8 @@ def delete_object(*args, **kwargs):
         show_warning(msg)
         print(msg)
         return
-    else:   
-        if layer.selected_object_id is None and layer.click_coords is None:
+    else:
+        if layer.selected_object_id is None or layer.click_coords is None:
             msg = f"Please select an object to delete"
             show_info(msg)
             print(msg)
@@ -135,7 +135,7 @@ def edit_object_id(new_id: int=None):
         print(msg)
         return
     
-    if layer.selected_object_id is None and layer.click_coords is None:
+    if layer.selected_object_id is None or layer.click_coords is None:
         msg = f"Please select an object to edit"
         show_info(msg)
         print(msg)
@@ -268,7 +268,8 @@ def add_object_layer(object_id: int = None):
         msg = f"Please specify an object to view"
         show_info(msg)
         print(msg)
-    
+        return
+
     mask_data = layer.data # changes (using napari's built-in tools) on Masks layer will be synced to Object layer
     all_object_ids = np.unique(mask_data)
     max_object_id = mask_data.max()
