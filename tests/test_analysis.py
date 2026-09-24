@@ -5,7 +5,8 @@ pytest.importorskip("napari")
 pytest.importorskip("qtpy")
 pytest.importorskip("skimage")
 
-from napari_macrophage.analysis import _compute_volume, _compute_sphericity
+from napari_macrophage.analysis import _compute_sphericity, _compute_volume
+
 
 # run pytest in tests/
 def test_compute_volume_unit_cube_voxel_size_one():
@@ -25,12 +26,12 @@ def test_compute_volume_multiple_labels_anisotropic_voxels():
 
     # label 1: an 8-voxel block + 2 additional voxels
     mask[0:2, 0:2, 0:2] = 1
-    mask[2, 2, 2] = 1   
-    mask[2, 2, 1] = 1      
+    mask[2, 2, 2] = 1
+    mask[2, 2, 1] = 1
 
     # label 2: a 2x2 square at z=2
     mask[0, 0:2, 2] = 2
-    mask[1, 0:2, 2] = 2   
+    mask[1, 0:2, 2] = 2
 
     # Anisotropic voxel size
     vx, vy, vz = 0.5, 0.2, 1.5

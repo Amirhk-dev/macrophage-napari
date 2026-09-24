@@ -36,6 +36,52 @@ detection = [
     "torch",
     "onnxruntime",
 ]
+test = [
+    "pytest",
+    "pytest-qt",
+]
+dev = [
+    "ruff",
+]
+docs = [
+    "sphinx>=7",
+    "furo",
+    "myst-parser",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # flake8-bugbear
+    "SIM", # flake8-simplify
+]
+ignore = [
+    "E501",   # line too long (formatter handles wrapping)
+    "E741",   # ambiguous variable name (l is used a lot as a loop var here)
+    "W291",   # trailing whitespace (formatter concern)
+    "W293",   # blank line contains whitespace (formatter concern)
+    "B008",   # magicgui uses defaults like Path("") — not a bug
+    "B023",   # function definition in loop (Qt callbacks pattern)
+    "B904",   # raise-from (not important for UI code)
+    "SIM102", # nested if — sometimes clearer than combined `and`
+    "SIM105", # try/except/pass — contextlib.suppress isn't always clearer
+    "SIM108", # if-else vs ternary — style preference
+    "SIM117", # combining `with` statements — not always clearer
+]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/*" = ["F401", "F811"]  # test fixtures often look "unused"
+
+[tool.ruff.lint.isort]
+known-first-party = ["napari_macrophage"]
 
 [project.entry-points."napari.manifest"]
 napari-macrophage = "napari_macrophage:napari.yaml"
