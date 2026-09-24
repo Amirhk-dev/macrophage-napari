@@ -55,7 +55,7 @@ napari
 ## Usage
 
 1. **Load data** — Plugins → napari-macrophage → Load Image + Mask
-2. **Edit masks** — Plugins → napari-macrophage → Edit CD206 + DAPI + Masks
+2. **Edit masks** — Plugins → napari-macrophage → Annotate & Correct Masks/Boxes
 3. **Segment** — Draw ROI bbox → Otsu preview → Save or Run Watershed
 4. **Detect** — Run ONNX detection on CD206 + DAPI slices
 5. **Render 3D** — In the *3D Visualization* panel, enter an Object ID and click *Generate 3D* to open the macrophage in a new window; save a PNG or export the mesh (STL/OBJ/PLY) from that window

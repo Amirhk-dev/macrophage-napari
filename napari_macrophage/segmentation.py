@@ -1,27 +1,50 @@
-import os
+"""Otsu-plus-Watershed segmentation controls.
+
+Provides ROI-driven Otsu preview with an interactive threshold slider, 3D
+Watershed refinement, and a batch entry point for running the pipeline over
+every ROI drawn on the ROI layer.
+"""
+
+from dataclasses import dataclass
+
 import napari
 import numpy as np
-
-from pathlib import Path
 from magicgui import magicgui
 from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QMessageBox
-
-
-from scipy.ndimage import label, binary_opening, binary_closing, distance_transform_edt
-from skimage.measure import label as sk_label, regionprops
-from skimage.feature import peak_local_max
+from scipy.ndimage import binary_closing, binary_opening, distance_transform_edt, label
 from skimage.draw import polygon2mask
+from skimage.feature import peak_local_max
 from skimage.filters import threshold_otsu
+from skimage.measure import label as sk_label
+from skimage.measure import regionprops
 from skimage.segmentation import watershed
-from dataclasses import dataclass
 
-from .state import dataState
-from .error import _layers_not_in_viewer_error, _layer_not_in_viewer_error
 from .edit_mask_image import select_object
+from .error import _layer_not_in_viewer_error, _layers_not_in_viewer_error
+from .state import dataState
+
 
 @dataclass
 class OtsuState:
+    """Per-viewer state for the current Otsu/Watershed preview session.
+
+    Attributes
+    ----------
+    image_3d : np.ndarray or None
+        CD206 volume cropped to the drawn bounding box.
+    bbox_mask_3d : np.ndarray or None
+        3D mask formed by extruding the 2D bounding box along Z.
+    last_bbox_z : int or None
+        Z-slice where the bounding box was drawn.
+    last_bbox_xy : np.ndarray or None
+        (4, 2) array of bounding-box corners in ``(y, x)``.
+    threshold : float or None
+        Current Otsu threshold (adjustable via the slider).
+    preview_mode : str or None
+        ``"otsu"`` or ``"watershed"`` — controls what the Preview layer shows.
+    """
+
     image_3d: np.ndarray | None = None          # volume inside bbox (first None: allows NoneType; second None: initialise to None)
     bbox_mask_3d: np.ndarray | None = None      # 3D bbox mask by copying the 2D bbox to all slices from z
     last_bbox_z: int | None = None              # slice index where bbox drawn
@@ -31,6 +54,7 @@ class OtsuState:
 
 ###### run automatic segmentation by adding a bounding box ######
 def _get_otsu_state(viewer) -> OtsuState:
+    """Return the :class:`OtsuState` attached to the CD206 layer, creating it if needed."""
     required_layers = ["CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         raise RuntimeError("Image layer for running segmentation not found")
@@ -56,6 +80,7 @@ def _ensure_dtype_for_max(arr: np.ndarray, max_value: int) -> np.ndarray:
 
 
 def _compute_iou(bin_mask1, bin_mask2):
+    """Return the intersection-over-union of two boolean masks."""
     intersection = np.logical_and(bin_mask1, bin_mask2).sum()
     union = np.logical_or(bin_mask1, bin_mask2).sum()
     if union == 0:
@@ -63,6 +88,7 @@ def _compute_iou(bin_mask1, bin_mask2):
     return intersection / union
 
 def _remove_small_objects(bin_mask, min_size=50):
+    """Zero out connected components smaller than ``min_size`` voxels."""
     labelled_mask = sk_label(bin_mask)
     for region in regionprops(labelled_mask):
         if region.area < min_size:
@@ -79,7 +105,7 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
     1. a continuity check to the 3D Otsu mask, keeping only predictions with gaps (in the z direction) ≤ num_track_frame.
     2. an iou check, removing predictions that do not overlap with the previous 2 valid slices.
     3. post-processing by binary opening and closing.
-    4. removing small components with size < 50 pixels.""" 
+    4. removing small components with size < 50 pixels."""
 
     viewer = napari.current_viewer()
     state = state or _get_otsu_state(viewer)
@@ -94,11 +120,10 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
     if len(roi_layer.data) == 0 and state.last_bbox_xy is None:
         msg = "No bounding box"
         show_info(msg)
-        print(msg)
-        return  
+        return
     if len(roi_layer.data) != 0:
-        last_bbox = roi_layer.data[-1][:,1:] 
-        state.last_bbox_xy = last_bbox 
+        last_bbox = roi_layer.data[-1][:,1:]
+        state.last_bbox_xy = last_bbox
         y_min, x_min = last_bbox[0]
         y_max, x_max = last_bbox[2]
         # print(roi_layer.data[-1].shape) # (4, 3)
@@ -122,14 +147,14 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
         # print(msg)
     image_slice = cd206_images[state.last_bbox_z]
     bbox_mask = polygon2mask(image_slice.shape, state.last_bbox_xy) # shape (1024, 1024), binary
-    
+
     # build 3D ROI volume
     start_frame = state.last_bbox_z
     num_frames = cd206_images.shape[0]-start_frame
     frames_to_segment = cd206_images[start_frame:]
     bbox_mask_3d = np.repeat(bbox_mask[np.newaxis, :, :], num_frames, axis=0)
     volume_in_bbox = frames_to_segment * bbox_mask_3d
-    
+
     state.image_3d = volume_in_bbox
     state.bbox_mask_3d = bbox_mask_3d
 
@@ -154,7 +179,7 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
     # continuity check
     num_track_frame = 3
     valid_slices = [mask_exist_slices[0]]
-    for prev, curr in zip(mask_exist_slices, mask_exist_slices[1:]):
+    for prev, curr in zip(mask_exist_slices, mask_exist_slices[1:], strict=False):
         if curr-prev <= num_track_frame:
             valid_slices.append(curr)
         else:
@@ -176,10 +201,10 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
         else:
             print(f"slice {curr+state.last_bbox_z} removed")
     # print("333", np.array(valid_slices_iou)+last_bbox_z)
-        
+
     filtered_otsu_mask_3d = np.zeros_like(otsu_mask_3d, dtype=np.uint8)
     filtered_otsu_mask_3d[valid_slices_iou] = otsu_mask_3d[valid_slices_iou]
-    
+
     # noise removal via binary opening and closing
     print("size before post-processing", filtered_otsu_mask_3d.sum())
     structure = np.ones((1,3,3), dtype=np.uint8)
@@ -200,15 +225,15 @@ def _show_otsu_on_preview(threshold=None, use_watershed=False, state: OtsuState 
         tol = 10
         if abs(bbox_mask.sum()-full_bbox_size) < tol:
             coords = peak_local_max(
-                distance, 
+                distance,
                 labels=filtered_otsu_mask_3d,
                 footprint=np.ones((50, 50, 50), dtype=bool),
                 num_peaks=100,
-            ) 
+            )
             # print("num peaks", coords.shape[0])
         else:
             coords = peak_local_max(
-                distance, 
+                distance,
                 labels=filtered_otsu_mask_3d,
                 num_peaks=1,
             ) # (n, 3)， n=2=num_peaks
@@ -250,6 +275,7 @@ def _update_otsu_preview_by_slider(threshold: float=0.5):
 
 otsu_slider_widget = None
 def _create_slider_or_update_otsu():
+    """Return (creating if needed) the Otsu threshold slider magicgui widget."""
     global otsu_slider_widget
     need_new = otsu_slider_widget is None or getattr(otsu_slider_widget, "native", None) is None # A magicgui widget is a Python object that wraps a Qt widget internally. The underlying native Qt widget can be accessed through the .native attribute.
     if not need_new:
@@ -273,6 +299,7 @@ def _create_slider_or_update_otsu():
 
 
 def run_otsu_on_bbox():
+    """Run 3D Otsu on the most-recently drawn ROI and show the result on Preview."""
     global otsu_slider_widget
 
     viewer = napari.current_viewer()
@@ -282,7 +309,7 @@ def run_otsu_on_bbox():
     state = _get_otsu_state(viewer)
     roi_layer = viewer.layers["ROI"]
 
-    if len(roi_layer.data) > 0: 
+    if len(roi_layer.data) > 0:
         _show_otsu_on_preview(state = state)
         otsu_thresh = threshold_otsu(state.image_3d[state.image_3d>0])
         _create_slider_or_update_otsu()
@@ -292,6 +319,7 @@ def run_otsu_on_bbox():
 
 
 def _run_watershed_on_whole_image():
+    """Rerun Otsu+Watershed with no bounding-box restriction (whole volume)."""
     viewer = napari.current_viewer()
     state = _get_otsu_state(viewer)
     if state.image_3d is None or state.bbox_mask_3d is None:
@@ -322,10 +350,11 @@ def run_watershed_on_bbox():
         if reply == QMessageBox.No:
             # add_roi_layer(run_algo="otsu")
             return
-        
+
         if "ROI" not in viewer.layers:
             roi_layer = viewer.add_shapes(
                 name="ROI",
+                ndim=3,
                 shape_type="rectangle",
                 edge_color="red",
                 face_color="transparent",
@@ -358,6 +387,17 @@ def run_watershed_on_bbox():
 
 
 def finalise_mask(do_3d=True, use_watershed=False):
+    """Commit the current Preview Mask into the Masks layer with fresh object IDs.
+
+    Parameters
+    ----------
+    do_3d : bool
+        If ``True``, treat the preview as a 3D volume; otherwise as a per-slice
+        result.
+    use_watershed : bool
+        Whether the preview was produced by Watershed (``True``) or by Otsu
+        alone (``False``). Controls how IDs are assigned.
+    """
     viewer = napari.current_viewer()
     state = _get_otsu_state(viewer)
     required_layers = ["Masks", "ROI", "Preview Mask", "CD206"]
@@ -371,12 +411,10 @@ def finalise_mask(do_3d=True, use_watershed=False):
     if state.preview_mode == "watershed" and not use_watershed:
         msg = "Current mask is from watershed, do not save as Otsu"
         show_info(msg)
-        print(msg)
         return
     if state.preview_mode == "otsu" and use_watershed:
         msg = "Current mask is from Otsu, do not save as Watershed"
         show_info(msg)
-        print(msg)
         return
 
     image_slice = cd206_images[state.last_bbox_z]
@@ -411,7 +449,6 @@ def finalise_mask(do_3d=True, use_watershed=False):
             if reply == QMessageBox.No:
                 msg = "Did not create new object"
                 show_info(msg)
-                print(msg)
                 viewer.layers.remove(roi_layer)
                 viewer.layers.remove(viewer.layers["Preview Mask"])
                 viewer.layers.selection.add(viewer.layers["Masks"])
@@ -430,11 +467,9 @@ def finalise_mask(do_3d=True, use_watershed=False):
 
             msg = f"Added new object {max_object_id+1} at slice {state.last_bbox_z} using Otsu's method"
             show_info(msg)
-            print(msg)   
         else:
-            msg = f"The object created overlap completely with an existing object, did not create new object"
+            msg = "The object created overlap completely with an existing object, did not create new object"
             show_info(msg)
-            print(msg)
             viewer.layers.remove(roi_layer)
             viewer.layers.remove(viewer.layers["Preview Mask"])
             viewer.layers["Masks"].refresh()
@@ -447,7 +482,7 @@ def finalise_mask(do_3d=True, use_watershed=False):
         if len(mask_exist_slices) == 0:
             show_info("No mask to add")
             viewer.layers.remove(roi_layer)
-            viewer.layers.remove(viewer.layers["Preview Mask"]) 
+            viewer.layers.remove(viewer.layers["Preview Mask"])
             viewer.layers.selection.add(viewer.layers["Masks"])
             return
         for z in [state.last_bbox_z+1, mask_exist_slices[-1]+2]:
@@ -472,7 +507,6 @@ def finalise_mask(do_3d=True, use_watershed=False):
             if reply == QMessageBox.No:
                 msg = "Did not create new object"
                 show_info(msg)
-                print(msg)
                 viewer.layers.remove(roi_layer)
                 viewer.layers.remove(viewer.layers["Preview Mask"])
                 viewer.layers.selection.add(viewer.layers["Masks"])
@@ -485,7 +519,6 @@ def finalise_mask(do_3d=True, use_watershed=False):
                 mask_data[otsu_mask_3d==1] = max_object_id+1
                 msg = f"Added new object {max_object_id+1} on slices {mask_exist_slices} using Otsu's method"
                 show_info(msg)
-                print(msg)
             else:
                 n_ws_labels = int(otsu_mask_3d.max())
                 target_max = int(max_object_id) + n_ws_labels
@@ -496,7 +529,6 @@ def finalise_mask(do_3d=True, use_watershed=False):
                 mask_data[watershed_mask_3d > 0] = watershed_mask_3d[watershed_mask_3d > 0]
                 msg = f"Added new objects {max_object_id+1}-{watershed_mask_3d.max()} on slices {mask_exist_slices} using Watershed"
                 show_info(msg)
-                print(msg)
 
             viewer.layers["Masks"].data = mask_data
             viewer.layers.remove(roi_layer)
@@ -505,9 +537,8 @@ def finalise_mask(do_3d=True, use_watershed=False):
             viewer.layers.selection.add(viewer.layers["Masks"])
 
         else:
-            msg = f"The object created overlap completely with an existing object, did not create new object"
+            msg = "The object created overlap completely with an existing object, did not create new object"
             show_info(msg)
-            print(msg)
             viewer.layers.remove(roi_layer)
             viewer.layers.remove(viewer.layers["Preview Mask"])
             viewer.layers["Masks"].refresh()
@@ -532,7 +563,7 @@ def run_watershed_for_all_rois():
             viewer.add_image(cd206_images, name="CD206", blending="additive")
     if "ROI" not in viewer.layers:
         _layer_not_in_viewer_error("ROI")
-        return  
+        return
     if "Masks" not in viewer.layers:
         mask_layer = viewer.add_labels(np.zeros_like(cd206_images, dtype=np.uint8), name="Masks")
         if select_object not in getattr(mask_layer, "mouse_drag_callbacks", []):
@@ -570,7 +601,7 @@ def run_watershed_for_all_rois():
             continue
         num_track_frame = 3
         valid_slices = [exist_slices[0]]
-        for prev, curr in zip(exist_slices, exist_slices[1:]):
+        for prev, curr in zip(exist_slices, exist_slices[1:], strict=False):
             if curr - prev <= num_track_frame:
                 valid_slices.append(curr)
             else:

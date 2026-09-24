@@ -1,22 +1,51 @@
+"""Build the docked "Macrophage Tools" widget and its menu-entry factories.
+
+Each ``make_*_widget`` function is referenced from ``napari.yaml`` and returns
+a Qt widget that napari mounts as a dock. :func:`_built_widgets` assembles the
+main scrollable panel with all editing, segmentation, bbox, and analysis
+controls plus the in-plugin log at the bottom.
+"""
+
 import napari
-import numpy as np
-
 from magicgui import magicgui
-from qtpy import QtWidgets, QtCore
-from napari.utils.notifications import show_info, show_warning
+from qtpy import QtCore, QtWidgets
 
-from .io import add_image_layer, add_mask_layer, add_layer_from_zarr
-from .edit_mask_image import delete_all, delete_object, edit_object_id, renumber, add_object_layer, sync_object_to_masks, _step_object_in_slice, select_object, interpolate_to_isotropic, shrink_mask_to_cd206
-from .segmentation import run_watershed_for_all_rois, finalise_mask, run_watershed_on_bbox, _create_slider_or_update_otsu, _create_slider_or_update_otsu
-from .bbox import add_roi_layer, generate_bboxes_from_mask_layer, export_bboxes_to_yolo, import_bboxes_from_yolo_folder, detect_objects_with_onnx
 from .analysis import cells_analysis
+from .bbox import (
+    add_roi_layer,
+    detect_objects_with_onnx,
+    export_bboxes_to_yolo,
+    generate_bboxes_from_mask_layer,
+    import_bboxes_from_yolo_folder,
+)
+from .clean3d import clean_3d_macrophages
+from .edit_mask_image import (
+    _step_object_in_slice,
+    add_object_layer,
+    delete_all,
+    delete_object,
+    edit_object_id,
+    interpolate_to_isotropic,
+    renumber,
+    select_object,
+    shrink_mask_to_cd206,
+    sync_object_to_masks,
+)
+from .io import add_image_layer, add_layer_from_zarr, add_mask_layer
+from .log_panel import LogPanel
+from .segmentation import (
+    _create_slider_or_update_otsu,
+    finalise_mask,
+    run_watershed_for_all_rois,
+    run_watershed_on_bbox,
+)
+from .state import set_voxel_size_um
+from .ui import CollapsibleSection, _disable_wheel_on_inputs, _set_call_button_tooltip, _widget_stylesheet
 from .visualize_3d import visualize_macrophage_3d
-from .ui import _widget_stylesheet, _set_call_button_tooltip, _disable_wheel_on_inputs
-from .state import dataState, set_voxel_size_um
-from .io import _prepare_all_layers
 
 
 def _register_keyboard_shortcuts(viewer):
+    """Bind the plugin's mask-editing hotkeys (d, Shift+D, v, i, Up/Down) on ``viewer``."""
     viewer.bind_key("d", delete_object, overwrite=True)
     viewer.bind_key("Shift+D", delete_all, overwrite=True)
     viewer.bind_key("v", add_object_layer, overwrite=True)
@@ -40,17 +69,17 @@ def _built_widgets():
         main_tools_dock = None
 
     delete_this_widget = magicgui(
-        delete_object, 
+        delete_object,
         call_button="Delete in Slice"
     )
     delete_all_widget = magicgui(
-        delete_all, 
+        delete_all,
         call_button="Delete in ALL Slice"
     )
 
     change_id_widget = magicgui(
-        edit_object_id, 
-        new_id={"label": "New ID", "min": 1, "step": 1}, 
+        edit_object_id,
+        new_id={"label": "New ID", "min": 1, "step": 1},
         call_button="Change ID"
     )
     for spin in change_id_widget.native.findChildren(QtWidgets.QSpinBox):
@@ -75,19 +104,19 @@ def _built_widgets():
     )
 
     add_roi_widget = magicgui(
-        lambda: add_roi_layer(run_algo="otsu"), 
+        lambda: add_roi_layer(run_algo="otsu"),
         call_button="Add BBox"
     )
     finalise_3d_widget = magicgui(
-        lambda: finalise_mask(do_3d=True, use_watershed=False), 
+        lambda: finalise_mask(do_3d=True, use_watershed=False),
         call_button="Save Otsu 3D"
     )
     watershed_widget = magicgui(
-        run_watershed_on_bbox, 
+        run_watershed_on_bbox,
         call_button="Run Watershed"
     )
     finalise_watershed_widget = magicgui(
-        lambda: finalise_mask(do_3d=True, use_watershed=True), 
+        lambda: finalise_mask(do_3d=True, use_watershed=True),
         call_button="Save Watershed 3D"
     )
     otsu_slider_widget = _create_slider_or_update_otsu()
@@ -95,11 +124,11 @@ def _built_widgets():
     slider_native = otsu_slider_widget.native
 
     bboxes_widget = magicgui(
-        add_roi_layer, 
+        add_roi_layer,
         call_button="Draw BBox"
     )
     gen_bboxes_widget = magicgui(
-        generate_bboxes_from_mask_layer, 
+        generate_bboxes_from_mask_layer,
         call_button="Generate All BBox"
     )
 
@@ -116,6 +145,7 @@ def _built_widgets():
         call_button="Detect BBs (ONNX)",
         onnx_path={"label": "ONNX model (.onnx)", "filter": "*.onnx"},
         confidence_threshold={"label": "Confidence", "min": 0.0, "max": 1.0, "step": 0.05},
+        nms_iou_threshold={"label": "NMS IoU threshold", "min": 0.0, "max": 1.0, "step": 0.05},
         current_slice_only={"label": "Current slice only"},
     )
     for le in detect_onnx_widget.onnx_path.native.findChildren(QtWidgets.QLineEdit):
@@ -124,24 +154,38 @@ def _built_widgets():
         le.setPlaceholderText("Default model (select to override)")
 
     image_info_widget = magicgui(
-        set_voxel_size_um, 
+        set_voxel_size_um,
         voxel_x={"label": "Pixel size X [µm]"},
         voxel_y={"label": "Pixel size Y [µm]"},
         voxel_z={"label": "Pixel size Z [µm]"},
         call_button="Update Voxel Size"
     )
     cells_analysis_widget = magicgui(
-        cells_analysis, 
+        cells_analysis,
         call_button="Cells Analysis"
     )
     interpolate_widget = magicgui(
-        interpolate_to_isotropic, 
+        interpolate_to_isotropic,
         call_button="Interpolate to Isotropic"
     )
     renumber_widget = magicgui(
         renumber,
         call_button="Renumber All"
     )
+
+    clean_3d_widget = magicgui(
+        clean_3d_macrophages,
+        erosion_radius={"label": "2D erosion radius", "min": 0, "max": 20, "step": 1},
+        closing_radius_2d={"label": "2D closing radius", "min": 0, "max": 20, "step": 1},
+        gaussian_sigma={"label": "Gaussian sigma", "min": 0.0, "max": 10.0, "step": 0.1},
+        closing_radius_3d={"label": "3D closing radius", "min": 0, "max": 10, "step": 1},
+        min_voxels_3d={"label": "Min voxels (3D)", "min": 0, "max": 1000000, "step": 50},
+        call_button="Clean 3D Macrophages",
+    )
+    for spin in clean_3d_widget.native.findChildren(QtWidgets.QSpinBox):
+        spin.setStyleSheet("font-size: 10pt;")
+    for spin in clean_3d_widget.native.findChildren(QtWidgets.QDoubleSpinBox):
+        spin.setStyleSheet("font-size: 10pt;")
 
     visualize_3d_widget = magicgui(
         visualize_macrophage_3d,
@@ -179,8 +223,8 @@ def _built_widgets():
     _set_call_button_tooltip(gen_bboxes_widget, "Generate bounding boxes from the Masks layer across all slices.")
     _set_call_button_tooltip(export_yolo_widget, "Export the current bounding boxes to YOLO txt files (one file per slice).")
     _set_call_button_tooltip(import_yolo_widget, "Import YOLO txt files from a folder.")
-    _set_call_button_tooltip(detect_onnx_widget, "Run ONNX object detection on all Z slices using CD206 + DAPI (CPU). Results are added to the ROI layer and can be edited or exported like any other bounding box.")
-    
+    _set_call_button_tooltip(detect_onnx_widget, "Run ONNX object detection on all Z slices using CD206 + DAPI (CPU). Per-slice NMS drops the smaller of any two overlapping boxes above 'NMS IoU threshold'. Results are added to the ROI layer and can be edited or exported like any other bounding box.")
+
     _set_call_button_tooltip(image_info_widget, "Update the voxel size information used for analysis and processing.")
     _set_call_button_tooltip(cells_analysis_widget, "Compute volume and sphericity for each cell based on Masks layer.")
     _set_call_button_tooltip(interpolate_widget, "Interpolate the current image/mask layer to isotropic voxel size.")
@@ -188,7 +232,10 @@ def _built_widgets():
 
     _set_call_button_tooltip(visualize_3d_widget, "Generate a smoothed 3D surface mesh for the selected object ID and open it in a NEW napari window. Each generation gets its own isolated 3D view. When 'Crop & center' is on, the mesh is centered at the origin (physical µm scale preserved — different objects remain comparable). An 'Export Mesh' button appears inside the new window for saving as STL/OBJ/PLY.")
 
-    def _row(*widgets: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout: # set horizontal layout 
+    _set_call_button_tooltip(clean_3d_widget, "Clean every labeled macrophage in the Masks layer independently. Per slice: binary erosion → keep largest 2D component → fill holes → 2D closing → Gaussian smoothing. Then per object: optional 3D closing → keep largest 3D connected component (26-conn) → drop if smaller than 'Min voxels (3D)'. Original IDs are preserved.")
+
+    def _row(*widgets: QtWidgets.QWidget) -> QtWidgets.QHBoxLayout:
+        """Return a tightly-spaced horizontal layout containing ``widgets``."""
         r = QtWidgets.QHBoxLayout()
         r.setSpacing(4)
         for w in widgets:
@@ -199,72 +246,69 @@ def _built_widgets():
             r.addWidget(w)
         return r
 
-    object_group = QtWidgets.QGroupBox("Objects")
-    object_v = QtWidgets.QVBoxLayout()
-    object_v.setContentsMargins(4, 4, 4, 4)
-    object_v.setSpacing(6)
-    object_v.addLayout(_row(delete_this_widget.native, delete_all_widget.native))
-    object_v.addLayout(_row(change_id_widget.native, new_id_widget.native))
-    object_v.addLayout(_row(view_object_widget.native, apply_changes_widget.native))
-    object_v.addLayout(_row(shrink_mask_widget.native))
-    object_group.setLayout(object_v)
+    def _section(title: str, *rows: QtWidgets.QLayout | QtWidgets.QWidget) -> CollapsibleSection:
+        """Build a collapsed :class:`CollapsibleSection` populated with ``rows``.
 
-    seg_group = QtWidgets.QGroupBox("Segmentation")
-    seg_v = QtWidgets.QVBoxLayout()
-    seg_v.setContentsMargins(4, 4, 4, 4)
-    seg_v.setSpacing(4)
-    seg_v.addLayout(_row(add_roi_widget.native, finalise_3d_widget.native))
-    seg_v.addLayout(_row(watershed_widget.native, finalise_watershed_widget.native))
-    seg_v.addLayout(_row(slider_native))
-    seg_group.setLayout(seg_v)
+        Each entry in ``rows`` may be a layout (added with ``addLayout``) or a
+        widget (added with ``addWidget`` after tightening its own layout).
+        """
+        sec = CollapsibleSection(title, expanded=False)
+        v = QtWidgets.QVBoxLayout()
+        v.setContentsMargins(4, 4, 4, 4)
+        v.setSpacing(4)
+        for item in rows:
+            if isinstance(item, QtWidgets.QLayout):
+                v.addLayout(item)
+            else:
+                sub = item.layout()
+                if sub is not None:
+                    sub.setContentsMargins(4, 4, 4, 4)
+                    sub.setSpacing(4)
+                v.addWidget(item)
+        sec.setContentLayout(v)
+        return sec
 
-    bbox_group = QtWidgets.QGroupBox("Bounding Boxes (BBs)")
-    bbox_v = QtWidgets.QVBoxLayout()
-    bbox_v.setContentsMargins(4, 4, 4, 4)
-    bbox_v.setSpacing(4)
-    bbox_v.addLayout(_row(bboxes_widget.native, gen_bboxes_widget.native))
-    bbox_v.addLayout(_row(export_yolo_widget.native, import_yolo_widget.native))
-    bbox_v.addLayout(_row(detect_onnx_widget.native))
-    bbox_group.setLayout(bbox_v)
+    object_group = _section(
+        "Objects",
+        _row(delete_this_widget.native, delete_all_widget.native),
+        _row(change_id_widget.native, new_id_widget.native),
+        _row(view_object_widget.native, apply_changes_widget.native),
+        _row(shrink_mask_widget.native),
+    )
 
-    voxel_group = QtWidgets.QGroupBox("Voxel Size")
-    voxel_v = QtWidgets.QVBoxLayout()
-    voxel_v.setContentsMargins(4, 4, 4, 4)
-    voxel_v.setSpacing(4)
-    voxel_v.addWidget(image_info_widget.native)
-    voxel_group.setLayout(voxel_v)
+    seg_group = _section(
+        "Segmentation",
+        _row(add_roi_widget.native, finalise_3d_widget.native),
+        _row(watershed_widget.native, finalise_watershed_widget.native),
+        _row(slider_native),
+    )
 
-    analysis_processing_group = QtWidgets.QGroupBox("Analysis and Processing")
-    ap_v = QtWidgets.QVBoxLayout()
-    ap_v.setContentsMargins(4, 4, 4, 4)
-    ap_v.setSpacing(4)
-    for w in [renumber_widget.native, cells_analysis_widget.native, interpolate_widget.native]:
-        layout = w.layout()
-        if layout is not None:
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(4)
-        ap_v.addWidget(w)
-    analysis_processing_group.setLayout(ap_v)
+    bbox_group = _section(
+        "Bounding Boxes (BBs)",
+        _row(bboxes_widget.native, gen_bboxes_widget.native),
+        _row(export_yolo_widget.native, import_yolo_widget.native),
+        _row(detect_onnx_widget.native),
+    )
 
-    visualize_3d_group = QtWidgets.QGroupBox("3D Visualization")
-    v3d_v = QtWidgets.QVBoxLayout()
-    v3d_v.setContentsMargins(4, 4, 4, 4)
-    v3d_v.setSpacing(4)
-    for w in [visualize_3d_widget.native]:
-        layout = w.layout()
-        if layout is not None:
-            layout.setContentsMargins(4, 4, 4, 4)
-            layout.setSpacing(4)
-        v3d_v.addWidget(w)
-    visualize_3d_group.setLayout(v3d_v)
+    voxel_group = _section("Voxel Size", image_info_widget.native)
+
+    analysis_processing_group = _section(
+        "Analysis and Processing",
+        renumber_widget.native,
+        cells_analysis_widget.native,
+        interpolate_widget.native,
+    )
+
+    cleaning_group = _section("Cleaning", clean_3d_widget.native)
+
+    visualize_3d_group = _section("3D Visualization", visualize_3d_widget.native)
 
     # scrollable root container
     content = QtWidgets.QWidget()
     root = QtWidgets.QVBoxLayout(content)
     root.setContentsMargins(4, 4, 4, 4)
     root.setSpacing(4)
-    for g in (object_group, seg_group, bbox_group, voxel_group, analysis_processing_group, visualize_3d_group):
-        g.setStyleSheet(local_style)
+    for g in (object_group, seg_group, bbox_group, voxel_group, analysis_processing_group, visualize_3d_group, cleaning_group):
         root.addWidget(g)
     root.addStretch(1)
 
@@ -277,19 +321,23 @@ def _built_widgets():
     wl = QtWidgets.QVBoxLayout(wrapper)
     wl.setContentsMargins(0, 0, 0, 0)
     wl.setSpacing(0)
-    wl.addWidget(scroll)
+    wl.addWidget(scroll, 3)
+
+    log_panel = LogPanel()
+    wl.addWidget(log_panel, 1)
+
     wrapper.setStyleSheet(local_style)
     _disable_wheel_on_inputs(wrapper)
 
     curr_dock = viewer.window.add_dock_widget(wrapper, area="right", name="Macrophage Tools")
     main_tools_dock = curr_dock
 
-    # Place the tools dock directly below the "Edit CD206+DAPI+Masks" dock
+    # Place the tools dock directly below the "Annotate & Correct Masks/Boxes" dock
     try:
         qt_window = viewer.window._qt_window
         edit_dock = next(
             (d for d in qt_window.findChildren(QtWidgets.QDockWidget)
-             if "Edit CD206" in (d.windowTitle() or "") and d is not curr_dock),
+             if "Annotate" in (d.windowTitle() or "") and d is not curr_dock),
             None
         )
         if edit_dock is not None:
@@ -300,6 +348,7 @@ def _built_widgets():
     _register_keyboard_shortcuts(viewer)
 
     def _on_tools_destroyed():
+        """Clear the module-level cache of the tools dock when it is destroyed."""
         global main_tools_dock
         main_tools_dock = None
     try:
@@ -308,6 +357,7 @@ def _built_widgets():
         pass
 
 def _make_add_image_layer_widget():
+    """Build the "Load Image" magicgui form used by the Load menu entry."""
     w = magicgui(
         add_image_layer,
         call_button="Load Image",
@@ -322,6 +372,7 @@ def _make_add_image_layer_widget():
     return w
 
 def _make_add_mask_layer_widget():
+    """Build the "Load Mask" magicgui form used by the Load menu entry."""
     w = magicgui(
         add_mask_layer,
         call_button="Load Mask",
@@ -335,7 +386,11 @@ def _make_add_mask_layer_widget():
     return w
 
 def make_add_layer_from_tif_widget():
-    img_w = _make_add_image_layer_widget() 
+    """Return a Qt container that combines the Load Image and Load Mask forms.
+
+    Registered in ``napari.yaml`` as the "Load Image + Mask" menu command.
+    """
+    img_w = _make_add_image_layer_widget()
     mask_w = _make_add_mask_layer_widget()
 
     load_container = QtWidgets.QWidget()
@@ -353,6 +408,7 @@ def make_add_layer_from_tif_widget():
     return load_container
 
 def make_add_layer_from_zarr_widget():
+    """Return the "Load Zarr" magicgui widget for the Load menu."""
     w = magicgui(
         add_layer_from_zarr,
         folder={"label": "Zarr folder", "mode": "d"},
@@ -363,11 +419,17 @@ def make_add_layer_from_zarr_widget():
     return w
 
 def make_edit_overlay_all_widget():
-    w = magicgui(edit_overlay_all, call_button="Edit CD206 + DAPI + Masks")
+    """Return the widget that opens the full Macrophage Tools dock.
+
+    Registered in ``napari.yaml`` as the "Annotate & Correct Masks/Boxes"
+    menu command.
+    """
+    w = magicgui(edit_overlay_all, call_button="Annotate & Correct Masks/Boxes")
     w.native.setStyleSheet(_widget_stylesheet())
     return w
 
 def make_run_watershed_for_all_rois_widget():
+    """Return the "Run Watershed for All ROIs" batch widget."""
     w = magicgui(run_watershed_for_all_rois, call_button="Run Watershed for All ROIs")
     w.native.setStyleSheet(_widget_stylesheet())
     _set_call_button_tooltip(w, "Run 3D Watershed for all ROIs detected. Instead of previewing the result, the segmentation results will be directly written into the Masks layer with new object IDs.")

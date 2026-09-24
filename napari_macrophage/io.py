@@ -1,19 +1,25 @@
+"""Load images and masks from TIFF or Zarr into napari layers.
+
+Provides the widget entry points ``add_image_layer``, ``add_mask_layer``,
+and ``add_layer_from_zarr``, along with helpers that recognise multi-channel
+stacks (CD206, DAPI, Collagen, F480) and stash them into the shared
+:data:`~napari_macrophage.state.dataState`.
+"""
+
+import re
+from pathlib import Path
+
 import napari
 import numpy as np
 import tifffile as tiff
-import re
 import zarr
-
-from pathlib import Path
+from napari.layers import Image as Napari_Image
+from napari.layers import Labels as Napari_Labels
 from napari.utils.notifications import show_info, show_warning
-from qtpy import QtWidgets, QtCore
 from qtpy.QtWidgets import QFileDialog, QMessageBox
-from napari.layers import Image as Napari_Image, Labels as Napari_Labels
 
-from .state import dataState
 from .edit_mask_image import select_object
-
-###### upload image and mask ######
+from .state import dataState
 
 _KNOWN_COLORMAPS = {
     "cd206": "red",
@@ -35,6 +41,7 @@ def _set_zyx_axis_labels(viewer):
 
 
 def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, visible: bool = False):
+    """Add or overwrite an image layer named ``name`` with additive blending."""
     if name in viewer.layers:
         viewer.layers[name].data = image
     else:
@@ -51,6 +58,7 @@ def _add_or_update_channel(viewer, image: np.ndarray, name: str, colormap: str, 
 
 
 def _store_channel_in_state(name: str, data: np.ndarray):
+    """Route a channel volume into the matching :class:`DataState` attribute."""
     key = name.lower()
     if key == "cd206":
         dataState.cd206_images = data
@@ -66,6 +74,21 @@ def add_image_layer(
     image_path: Path = Path(""),
     channel_names: str = "Collagen, F480, CD206, DAPI, Brightfield",
 ):
+    """Load a TIFF stack into the viewer and store channels in :data:`dataState`.
+
+    Handles either a single-channel ``(Z, Y, X)`` stack or a multi-channel
+    ``(C, Z, Y, X)`` stack where the channel axis is inferred as the smallest
+    dimension. Channel names are matched case-insensitively against the known
+    channels (CD206, DAPI, Collagen, F480) to pick a colormap and to route
+    the data into the correct :class:`DataState` attribute.
+
+    Parameters
+    ----------
+    image_path : Path
+        TIFF file to read.
+    channel_names : str
+        Comma-separated channel names in image order.
+    """
     img = tiff.imread(image_path)
     names = [n.strip() for n in channel_names.split(",") if n.strip()]
 
@@ -99,13 +122,18 @@ def add_image_layer(
 
 
 def add_mask_layer(mask_path: Path = Path("")):
+    """Load a ``(Z, Y, X)`` uint8 instance-label mask into the viewer.
+
+    Wires up a click callback (:func:`select_object`) on the resulting Masks
+    layer so users can click to select an object for downstream editing.
+    """
     dataState.mask_path = mask_path
     mask = tiff.imread(mask_path)
     if mask.ndim != 3:
         msg = "Please upload mask of shape (z, y, x)"
-        show_warning(msg) 
+        show_warning(msg)
     else:
-        dataState.mask_images = mask.astype(np.uint8) 
+        dataState.mask_images = mask.astype(np.uint8)
     # dataState.file_name = mask_path.stem
 
     viewer = napari.current_viewer()
@@ -122,13 +150,17 @@ def add_mask_layer(mask_path: Path = Path("")):
         viewer.layers["Masks"].selected_object_id = None
     if not hasattr(viewer.layers["Masks"], "click_coords"):
         viewer.layers["Masks"].click_coords = None
-        
+
     msg = f"Loaded mask: {mask_path}"
     show_info(msg)
-    print(msg)
 
 
 def _load_image_mask_from_zarr_group(viewer, root):
+    """Pull ``image``, ``mask``, and optional ``bboxes2d`` arrays from a zarr group.
+
+    Returns ``(cd206, dapi, mask)`` after populating :data:`dataState`.
+    Prompts the user (via a Qt dialog) before importing bounding boxes.
+    """
     img_arr = None
     if "image" in root:
         try:
@@ -176,6 +208,7 @@ def _load_image_mask_from_zarr_group(viewer, root):
                 if "ROI" not in viewer.layers:
                     roi_layer = viewer.add_shapes(
                         name="ROI",
+                        ndim=3,
                         shape_type="rectangle",
                         edge_color="red",
                         face_color="transparent",
@@ -208,6 +241,10 @@ def _load_image_mask_from_zarr_group(viewer, root):
 
 
 def add_layer_from_zarr(folder: Path | None = None):
+    """Load CD206/DAPI/Masks (and optional ROIs) from a ``.zarr`` directory.
+
+    If ``folder`` is ``None``, a directory picker is shown.
+    """
     if folder is None:
         dir_path = QFileDialog.getExistingDirectory(None, "Select .zarr folder", "")
         if not dir_path:
@@ -222,7 +259,7 @@ def add_layer_from_zarr(folder: Path | None = None):
         cd206_images, dapi_images, mask_images = _load_image_mask_from_zarr_group(viewer, root)
     except Exception as e:
         show_warning(f"Failed to open zarr: {e}")
-        return 
+        return
     file_name = folder.stem
     # parts = file_name.split("_")
     # file_name = "_".join(parts[:2])  # image_1
@@ -250,6 +287,7 @@ def add_layer_from_zarr(folder: Path | None = None):
 
 
 def _is_label_layer(arr):
+    """Return ``True`` if ``arr`` looks like a 3D integer-valued label volume."""
     a = np.asarray(arr)
     if a.ndim != 3:
         return False
@@ -266,7 +304,7 @@ def _prepare_opened_image_and_mask(viewer, layer):
     This function extracts the correct channels from the uploaded image and create corresponding layers in the layer list."""
     src = getattr(layer, "source", None)
     file_path = getattr(src, "path", None)
-   
+
     # first check if it is a zarr file
     zarr_root = None
     if isinstance(file_path, str):
@@ -314,7 +352,7 @@ def _prepare_opened_image_and_mask(viewer, layer):
         except Exception:
             pass
         return
-    
+
     # if not, process as tiff
     if file_path:
         file_name = Path(file_path).stem
@@ -343,7 +381,7 @@ def _prepare_opened_image_and_mask(viewer, layer):
             viewer.layers.remove(layer)
         except Exception:
             pass
-    
+
     elif isinstance(layer, Napari_Image):
         if layer.data.ndim == 4 and layer.data.shape[0] == 2:
             dataState.cd206_images = layer.data[0]
@@ -371,6 +409,7 @@ def _prepare_opened_image_and_mask(viewer, layer):
 
 
 def _prepare_all_layers(viewer):
+    """Reprocess every existing layer via :func:`_prepare_opened_image_and_mask`."""
     for l in list(viewer.layers):
         _prepare_opened_image_and_mask(viewer, l)
 

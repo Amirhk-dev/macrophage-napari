@@ -1,3 +1,10 @@
+"""Standalone 3D mesh viewer and export helpers.
+
+:func:`visualize_macrophage_3d` builds a smoothed surface mesh for one object,
+opens it in a new napari window, and adds an "Export Mesh" toolbar with
+STL/OBJ/PLY writers.
+"""
+
 import struct
 from pathlib import Path
 
@@ -12,7 +19,6 @@ from .error import _layers_not_in_viewer_error
 from .macrophage_mesh import mesh_from_binary
 from .state import get_voxel_size_um
 
-
 LAYER_PREFIX = "3D Object"
 
 
@@ -24,6 +30,7 @@ def _dismiss_notifications_after(timeout_ms: int = 3000) -> None:
         return
 
     def _close():
+        """Close every open napari notification popup."""
         for w in QApplication.topLevelWidgets():
             if isinstance(w, NapariQtNotification):
                 try:
@@ -35,10 +42,12 @@ def _dismiss_notifications_after(timeout_ms: int = 3000) -> None:
 
 
 def _layer_name(object_id: int) -> str:
+    """Return the canonical layer name used for a mesh of ``object_id``."""
     return f"{LAYER_PREFIX} {object_id}"
 
 
 def _write_obj(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
+    """Write an ASCII Wavefront .obj file."""
     with open(path, "w", encoding="utf-8") as f:
         f.write("# napari-macrophage export\n")
         for v in verts_xyz:
@@ -48,6 +57,7 @@ def _write_obj(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
 
 
 def _write_ply(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
+    """Write an ASCII Stanford .ply file."""
     with open(path, "w", encoding="utf-8") as f:
         f.write("ply\nformat ascii 1.0\n")
         f.write(f"element vertex {len(verts_xyz)}\n")
@@ -61,6 +71,7 @@ def _write_ply(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
 
 
 def _write_stl(path: Path, verts_xyz: np.ndarray, faces: np.ndarray) -> None:
+    """Write a binary STL file (little-endian, per the STL spec)."""
     tris = verts_xyz[faces]  # (M, 3, 3)
     e1 = tris[:, 1] - tris[:, 0]
     e2 = tris[:, 2] - tris[:, 0]
@@ -269,6 +280,7 @@ def visualize_macrophage_3d(
 
     bg_state = {"white": background == "white"}
     def _toggle_bg():
+        """Flip the 3D canvas between black and white background."""
         bg_state["white"] = not bg_state["white"]
         _set_canvas_bg(viewer_3d, "white" if bg_state["white"] else "black")
 

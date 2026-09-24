@@ -1,16 +1,23 @@
+"""Bounding-box tooling for the ROI layer.
+
+Handles drawing rectangles on the ROI layer, generating them from the Masks
+layer, importing/exporting YOLO ``.txt`` files, and running an ONNX object
+detector on CD206+DAPI slices.
+"""
+
 import os
+import re
+from pathlib import Path
+
 import napari
 import numpy as np
-import re
-
-from pathlib import Path
 from napari.layers import Labels as _Labels
 from napari.utils.notifications import show_info, show_warning
 from qtpy.QtWidgets import QFileDialog, QMessageBox
 
-from .state import dataState
 from .error import _layers_not_in_viewer_error
 from .segmentation import run_otsu_on_bbox
+from .state import dataState
 
 
 def add_roi_layer(run_algo=None):
@@ -28,11 +35,13 @@ def add_roi_layer(run_algo=None):
         msg = "Please save any preview mask"
         show_warning(msg)
         return
-    
+
     if "ROI" not in viewer.layers:
-        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=3)
+        # ndim=3 is required in napari 0.7+ so the empty Shapes layer matches
+        # the viewer's (Z, Y, X) world; otherwise rendering raises IndexError.
+        roi_layer = viewer.add_shapes(name="ROI", ndim=3, shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=3)
         curr_z = int(viewer.dims.current_step[0])
-        _dummy = np.array([ # to force the layer to store bb of shape (4, 3) 
+        _dummy = np.array([ # to force the layer to store bb of shape (4, 3)
             [curr_z, 0, 0],
             [curr_z, 0, 0],
             [curr_z, 0, 0],
@@ -55,7 +64,6 @@ def add_roi_layer(run_algo=None):
 
     msg = "Please draw a bounding box"
     show_info(msg)
-    print(msg)
 
     if run_algo == "otsu":
         if len(roi_layer.data) == 0:
@@ -66,6 +74,12 @@ def add_roi_layer(run_algo=None):
 
 ###### import or export COCO-style JSON/ YOLO-style txt ######
 def draw_bboxes(*args, **kwargs):
+    """Callback for the ROI layer's data event; validates bounding boxes.
+
+    Ensures each rectangle on the ROI layer stays within the image bounds
+    and belongs to a single Z slice. Called by napari whenever the ROI layer
+    is edited.
+    """
     viewer = napari.current_viewer()
     roi_layer = viewer.layers["ROI"]
     # print("111", roi_layer.data)
@@ -109,7 +123,7 @@ def generate_bboxes_from_mask_layer():
         return
 
     if "ROI" not in viewer.layers:
-        roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
+        roi_layer = viewer.add_shapes(name="ROI", ndim=3, shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
     else:
         roi_layer = viewer.layers["ROI"]
         reply = QMessageBox.question(
@@ -123,8 +137,8 @@ def generate_bboxes_from_mask_layer():
                 viewer.layers.remove(roi_layer)
             except Exception:
                 pass
-            roi_layer = viewer.add_shapes(name="ROI", shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
-    
+            roi_layer = viewer.add_shapes(name="ROI", ndim=3, shape_type="rectangle", edge_color="white", face_color="transparent", edge_width=2)
+
     Z = int(data.shape[0])
     added = 0
 
@@ -139,7 +153,7 @@ def generate_bboxes_from_mask_layer():
                     ys, xs = np.where(slice2d == lab)
                     if ys.size == 0:
                         continue
-                    y0, y1 = int(ys.min()), int(ys.max()) 
+                    y0, y1 = int(ys.min()), int(ys.max())
                     x0, x1 = int(xs.min()), int(xs.max())
                     if x1 <= x0 or y1 <= y0:
                         continue
@@ -150,15 +164,14 @@ def generate_bboxes_from_mask_layer():
                         [z, y1, x0],
                     ], dtype=float)
                     roi_layer.add(
-                        curr_bbox, 
-                        shape_type="rectangle", 
-                        edge_color="white", 
-                        face_color="transparent", 
+                        curr_bbox,
+                        shape_type="rectangle",
+                        edge_color="white",
+                        face_color="transparent",
                         edge_width=2
                     )
                     added += 1
     show_info(f"Generated {added} bounding boxes from {mask_layer.name}")
-    print(f"Generated {added} bounding boxes from {mask_layer.name}")
 
 
 def export_bboxes_to_yolo():
@@ -242,14 +255,13 @@ def export_bboxes_to_yolo():
 
     msg = f"Exported {files_written} YOLO files, {boxes_written} boxes to {out_dir}"
     show_info(msg)
-    print(msg)
 
 
 def import_bboxes_from_yolo_folder():
     """Import YOLO txt labels from a folder. Only files that match {file_name}_slice_{z}.txt are loaded."""
 
     viewer = napari.current_viewer()
-    file_name = dataState.file_name 
+    file_name = dataState.file_name
     cd206_images = dataState.cd206_images
     if not file_name:
         show_warning("Please load image first before loading its bounding boxes.")
@@ -270,6 +282,7 @@ def import_bboxes_from_yolo_folder():
     if "ROI" not in viewer.layers:
         roi_layer = viewer.add_shapes(
             name="ROI",
+            ndim=3,
             shape_type="rectangle",
             edge_color="white",
             face_color="transparent",
@@ -296,9 +309,9 @@ def import_bboxes_from_yolo_folder():
                     continue
                 z_idx = int(m.group(1))
                 fpath = os.path.join(dir_path, fname)
-    
+
                 try:
-                    with open(fpath, "r") as fh:
+                    with open(fpath) as fh:
                         lines = fh.readlines()
                 except Exception:
                     continue
@@ -357,34 +370,97 @@ def import_bboxes_from_yolo_folder():
 
                 if added_this_file > 0:
                     total_files += 1
-    
+
     curr_z = int(viewer.dims.current_step[0])
     if curr_z < viewer.layers["CD206"].data.shape[0] - 1: # simulate a change of slice to force refresh
         viewer.dims.set_current_step(0, curr_z+1)
     else:
         viewer.dims.set_current_step(0, curr_z-1)
     viewer.dims.set_current_step(0, curr_z)
-    
+
     msg = f"Imported {total_boxes} boxes from {total_files} files in {dir_path}"
     show_info(msg)
-    print(msg)
+
+
+# IoU threshold above which the smaller of two overlapping boxes is dropped
+# during post-detection NMS. See _nms_drop_smaller_on_overlap.
+_NMS_IOU_THRESHOLD = 0.2
+
+
+def _nms_drop_smaller_on_overlap(
+    boxes: list[tuple[float, float, float, float]],
+    iou_threshold: float = _NMS_IOU_THRESHOLD,
+) -> list[tuple[float, float, float, float]]:
+    """Deduplicate overlapping boxes by dropping the smaller of each overlapping pair.
+
+    Iterates boxes from largest to smallest area and keeps a box only if its
+    IoU with every already-kept box is at or below ``iou_threshold``. This is
+    the "keep the larger box" variant of NMS (standard NMS keeps the highest
+    confidence instead).
+
+    Parameters
+    ----------
+    boxes : list of (x_min, y_min, x_max, y_max)
+        Axis-aligned rectangles in pixel coordinates.
+    iou_threshold : float
+        Two boxes with IoU strictly greater than this are considered
+        duplicates; the smaller one is dropped.
+
+    Returns
+    -------
+    list of tuple
+        Surviving boxes in decreasing-area order.
+    """
+    def _area(b):
+        return max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+
+    def _iou(a, b):
+        ix1, iy1 = max(a[0], b[0]), max(a[1], b[1])
+        ix2, iy2 = min(a[2], b[2]), min(a[3], b[3])
+        inter = max(0.0, ix2 - ix1) * max(0.0, iy2 - iy1)
+        if inter == 0.0:
+            return 0.0
+        union = _area(a) + _area(b) - inter
+        return inter / union if union > 0.0 else 0.0
+
+    kept: list[tuple[float, float, float, float]] = []
+    for box in sorted(boxes, key=_area, reverse=True):
+        if all(_iou(box, k) <= iou_threshold for k in kept):
+            kept.append(box)
+    return kept
 
 
 def _default_onnx_path() -> Path | None:
-    """Return the path to the bundled default ONNX model, or None if not present."""
-    p = Path(__file__).parent / "models" / "default_model.onnx"
-    return p if p.exists() else None
+    """Return the bundled default ONNX model path, or ``None`` if none is shipped.
+
+    Preferred names (in order): ``default_model.onnx``, ``best.onnx`` (YOLO
+    convention). Falls back to the first ``.onnx`` file found in the models
+    directory so any bundled weights work without renaming.
+    """
+    models_dir = Path(__file__).parent / "models"
+    for preferred in ("default_model.onnx", "best.onnx"):
+        p = models_dir / preferred
+        if p.exists():
+            return p
+    matches = sorted(models_dir.glob("*.onnx"))
+    return matches[0] if matches else None
 
 
 def detect_objects_with_onnx(
     onnx_path: Path = None,
-    confidence_threshold: float = 0.5,
+    confidence_threshold: float = 0.25,
+    nms_iou_threshold: float = _NMS_IOU_THRESHOLD,
     current_slice_only: bool = False,
 ):
     """Run ONNX object detection using CD206 (R), zeros (G), DAPI (B) → input shape (1,3,H,W).
-    Detected boxes are added to the ROI shapes layer in the same format as manually drawn boxes.
-    If no model is selected, the bundled default model (napari_macrophage/models/default_model.onnx)
-    is used automatically."""
+
+    Detected boxes are added to the ROI shapes layer in the same format as manually drawn
+    boxes. Per-slice NMS drops the smaller of any two boxes whose IoU exceeds
+    ``nms_iou_threshold``.
+
+    If no model is selected, the bundled default model (napari_macrophage/models/best.onnx
+    or default_model.onnx) is used automatically.
+    """
     try:
         import onnxruntime as ort
     except ImportError:
@@ -428,6 +504,7 @@ def detect_objects_with_onnx(
     # matching the MultiChannelYoloDetector preprocessing in the training pipeline.
     # This is robust to bright outlier pixels that would skew a simple max normalisation.
     def _pct_norm(arr: np.ndarray, lo_pct: float = 0.1, hi_pct: float = 99.9) -> np.ndarray:
+        """Percentile-clip ``arr`` into ``[0, 1]`` (matches training preprocessing)."""
         lo = float(np.percentile(arr, lo_pct))
         hi = float(np.percentile(arr, hi_pct))
         if hi <= lo:                          # degenerate: fall back to min/max
@@ -444,7 +521,7 @@ def detect_objects_with_onnx(
 
     if "ROI" not in viewer.layers:
         roi_layer = viewer.add_shapes(
-            name="ROI", shape_type="rectangle",
+            name="ROI", ndim=3, shape_type="rectangle",
             edge_color="white", face_color="transparent", edge_width=2
         )
     else:
@@ -454,6 +531,7 @@ def detect_objects_with_onnx(
     blocker = getattr(roi_layer.events.data, "blocker", None)
 
     def _run():
+        """Run ONNX inference over ``z_range`` and append detections to the ROI layer."""
         nonlocal total_boxes
         for i, z in enumerate(z_range):
             # Input: R=CD206, G=zeros, B=DAPI → (1, 3, H, W)
@@ -477,6 +555,10 @@ def detect_objects_with_onnx(
                     print(f"[ONNX] score range      : {scores.min():.4f} – {scores.max():.4f}  (threshold={confidence_threshold})")
                     print(f"[ONNX] sample coords (first 3): {preds[:3, :4].tolist()}")
 
+            # Collect confidence-filtered boxes for this slice, then NMS them
+            # together so overlapping duplicates on the same slice are dropped
+            # (keeping the larger of any overlapping pair, IoU > 0.2).
+            slice_boxes: list[tuple[float, float, float, float]] = []
             for det in preds:
                 if len(det) < 5:
                     continue
@@ -489,6 +571,13 @@ def detect_objects_with_onnx(
                 y_max = min(float(H - 1), yc + bh / 2)
                 if x_max <= x_min or y_max <= y_min:
                     continue
+                slice_boxes.append((x_min, y_min, x_max, y_max))
+
+            kept_boxes = _nms_drop_smaller_on_overlap(slice_boxes, nms_iou_threshold)
+            if i == 0 and slice_boxes:
+                print(f"[ONNX] slice {z}: {len(slice_boxes)} → {len(kept_boxes)} after NMS (IoU>{nms_iou_threshold})")
+
+            for (x_min, y_min, x_max, y_max) in kept_boxes:
                 rect = np.array([
                     [z, y_min, x_min],
                     [z, y_min, x_max],
@@ -505,7 +594,15 @@ def detect_objects_with_onnx(
     else:
         _run()
 
-    # Refresh slice view
+    # napari 0.7 doesn't redraw a Shapes layer whose events.data was blocked
+    # during bulk insert. Explicitly refresh and re-emit so vispy re-renders.
+    try:
+        roi_layer.events.data(value=roi_layer.data, action="added")
+    except Exception:
+        pass
+    roi_layer.refresh()
+
+    # Nudge the slice slider so the current view repaints immediately.
     curr_z = int(viewer.dims.current_step[0])
     step   = curr_z + 1 if curr_z < Z - 1 else curr_z - 1
     viewer.dims.set_current_step(0, step)

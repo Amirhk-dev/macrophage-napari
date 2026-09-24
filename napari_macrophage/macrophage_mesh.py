@@ -45,7 +45,7 @@ Quick start
 """
 from __future__ import annotations
 
-from typing import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Mapping
 
 import numpy as np
 from scipy.ndimage import binary_closing, binary_erosion, gaussian_filter, zoom

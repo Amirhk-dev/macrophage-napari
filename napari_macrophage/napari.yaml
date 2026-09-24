@@ -12,7 +12,7 @@ contributions:
       python_name: napari_macrophage.build_widgets:make_add_layer_from_zarr_widget
 
     - id: napari-macrophage.edit_overlay_all
-      title: Edit CD206 + DAPI + Masks 
+      title: Annotate & Correct Masks/Boxes
       python_name: napari_macrophage.build_widgets:make_edit_overlay_all_widget
 
     - id: napari-macrophage.run_watershed_for_all_rois
@@ -27,7 +27,7 @@ contributions:
       display_name: Load from Zarr
 
     - command: napari-macrophage.edit_overlay_all
-      display_name: Edit CD206 + DAPI + Masks
+      display_name: Annotate & Correct Masks/Boxes
 
     - command: napari-macrophage.run_watershed_for_all_rois
       display_name: Run Watershed for All ROIs

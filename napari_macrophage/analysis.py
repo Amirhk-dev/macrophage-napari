@@ -1,6 +1,8 @@
+"""Per-cell morphology metrics (volume, surface area, sphericity) with a Qt
+results dialog and CSV export."""
+
 import napari
 import numpy as np
-
 from napari.utils.notifications import show_info, show_warning
 from qtpy import QtWidgets
 from skimage import measure
@@ -13,6 +15,15 @@ from .ui import _widget_stylesheet
 ###### show cell analysis ######
 # voxel arguments are in ZYX order to match state.voxel_size_um = (dz, dy, dx).
 def _compute_volume(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
+    """Return ``{label_id: volume_in_um3}`` for every non-zero label in ``mask_3d``.
+
+    Parameters
+    ----------
+    dz, dy, dx : float
+        Voxel dimensions in micrometres.
+    mask_3d : np.ndarray
+        Instance-label mask with shape ``(Z, Y, X)``.
+    """
     voxel_volume = float(dz) * float(dy) * float(dx)
 
     labels = np.unique(mask_3d)
@@ -27,7 +38,12 @@ def _compute_volume(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
 
 
 def _compute_sphericity(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
-    """ Ψ = (pi^1/3 * (6V)^2/3) / A"""
+    """Compute per-label sphericity ``Ψ = π^(1/3) · (6V)^(2/3) / A`` and surface area.
+
+    Surface area is estimated from a marching-cubes triangular mesh of each
+    labelled object; sphericity is clipped to ``1.0``. Returns two dicts keyed
+    by label id: ``(sphericity, surface_area_um2)``.
+    """
     voxel_volume = float(dz) * float(dy) * float(dx)
 
     labels = np.unique(mask_3d)
@@ -69,6 +85,13 @@ def _compute_sphericity(dz: float, dy: float, dx: float, mask_3d: np.ndarray):
 
 
 def cells_analysis(*args, **kwargs):
+    """Compute per-cell volume, surface area, and sphericity and show a results dialog.
+
+    Reads the Masks layer from the active napari viewer and the voxel size
+    from :data:`~napari_macrophage.state.dataState`. Opens a modal Qt dialog
+    with a sortable table and a "Save CSV" button. Requires the voxel size to
+    be set; otherwise emits a warning and returns.
+    """
     viewer = napari.current_viewer()
     required_layers = ["Masks"]
     if _layers_not_in_viewer_error(viewer, required_layers):
@@ -121,6 +144,7 @@ def cells_analysis(*args, **kwargs):
     layout.addLayout(btns)
 
     def _save_csv():
+        """Prompt for a path and write the per-cell table to CSV."""
         default_name = (dataState.file_name or "cells") + "_cell_analysis"
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             dlg, "Save Cells Analysis", default_name, "CSV Files (*.csv);;All Files (*)"

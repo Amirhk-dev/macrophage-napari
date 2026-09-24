@@ -1,12 +1,19 @@
-import numpy as np
+"""Mask-editing operations bound to the plugin's hotkeys and Edit widget.
+
+Includes object selection (click), per-slice and full-object deletion, ID
+reassignment, per-object views, mask sync-back, sequential renumbering,
+isotropic resampling, and CD206/DAPI-driven mask shrinking.
+"""
+
 import napari
-from napari.utils.notifications import show_info, show_warning, show_error
-from scipy.ndimage import label, binary_fill_holes, gaussian_filter
+import numpy as np
+from napari.utils.notifications import show_error, show_info, show_warning
+from scipy.ndimage import binary_fill_holes, gaussian_filter, label
 from skimage.filters import threshold_otsu
 
 from .error import _layers_not_in_viewer_error
 from .state import dataState
-from .analysis import cells_analysis
+
 
 ###### selection ######
 def select_object(layer, event): # callback function
@@ -16,12 +23,11 @@ def select_object(layer, event): # callback function
         z, y, x = coords
         Z, H, W = layer.data.shape
         if not (0 <= z < Z and 0 <= y < H and 0 <= x < W):
-            msg = f"Clicked outside image area"
+            msg = "Clicked outside image area"
             show_warning(msg)
-            print(msg)
             return
         object_id = layer.data[z, y, x]
-        try: 
+        try:
             layer.selected_object_id = object_id
         except Exception as e:
             print("Error setting selected_object_id:", e)
@@ -30,20 +36,17 @@ def select_object(layer, event): # callback function
             layer.click_coords = (z, y, x)
             msg = f"Selected object ID {object_id} at ({layer.click_coords[0]}, {layer.click_coords[1]}, {layer.click_coords[2]})"
             show_info(msg)
-            print(msg)
         else:
-            msg = f"Clicked on background"
+            msg = "Clicked on background"
             show_info(msg)
-            print(msg)
             viewer = napari.current_viewer()
             if "Selection" in viewer.layers:
                 viewer.layers.remove(viewer.layers["Selection"])
     else:
-        msg = f"No mask data"
+        msg = "No mask data"
         show_warning(msg)
-        print(msg)
 
- 
+
 ###### deletion ######
 def delete_object(*args, **kwargs):
     """Delete the connected component of the object on the current slice"""
@@ -51,32 +54,29 @@ def delete_object(*args, **kwargs):
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
-    
+
     layer = viewer.layers.selection.active
     if layer.name != "Masks":
         msg = f"Current active layer is {layer.name}, please select the Masks layer"
         show_warning(msg)
-        print(msg)
         return
     else:
         if layer.selected_object_id is None or layer.click_coords is None:
-            msg = f"Please select an object to delete"
+            msg = "Please select an object to delete"
             show_info(msg)
-            print(msg)
             return
         else:
             object_id = layer.selected_object_id
             if object_id == 0:
-                msg = f"Please select an object to delete"
+                msg = "Please select an object to delete"
                 show_info(msg)
-                print(msg)
                 return
             else:
                 curr_position = layer.click_coords # coordinates of the click (z, y, x)
                 curr_slice_idx = curr_position[0]
                 layer_slice = layer.data[curr_slice_idx]
                 # layer_slice[layer_slice == object_id] = 0 # only affect the current slice, delete the whole object
-                mask_slice = (layer_slice == object_id) 
+                mask_slice = (layer_slice == object_id)
                 labelled_mask_slice, num_features = label(mask_slice) # binary mask -> each connected component will be labelled differently
                 target_label = labelled_mask_slice[curr_position[1], curr_position[2]]
                 layer_slice[labelled_mask_slice == target_label] = 0 # delete only the connected component
@@ -84,9 +84,8 @@ def delete_object(*args, **kwargs):
                     l.refresh()
                 msg = f"Deleted object {object_id} at slice {curr_slice_idx}"
                 show_info(msg)
-                print(msg)
 
-    layer.selected_object_id = 0 
+    layer.selected_object_id = 0
     layer.click_coords = None
 
 
@@ -96,26 +95,24 @@ def delete_all(*args, **kwargs):
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
-    
+
     layer = viewer.layers.selection.active
     if layer.name != "Masks":
         msg = f"Current active layer is {layer.name}, please select the Masks layer"
         show_warning(msg)
-        print(msg)
-        return  
-    else: 
+        return
+    else:
         object_id = layer.selected_object_id
         if object_id == 0:
-            msg = f"Please select an object to delete"
+            msg = "Please select an object to delete"
             show_info(msg)
-            print(msg)
             return
         else:
             layer.data[layer.data == object_id] = 0
             for l in viewer.layers:
                 l.refresh()
             msg = f"Deleted object {object_id} at all slices"
-    
+
     layer.selected_object_id = 0
     layer.click_coords = None
 
@@ -127,42 +124,38 @@ def edit_object_id(new_id: int=None):
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
-  
-    layer = viewer.layers.selection.active  
+
+    layer = viewer.layers.selection.active
     if layer.name != "Masks":
         msg = f"Current active layer is {layer.name}, please select the Masks layer"
         show_warning(msg)
-        print(msg)
         return
-    
+
     if layer.selected_object_id is None or layer.click_coords is None:
-        msg = f"Please select an object to edit"
+        msg = "Please select an object to edit"
         show_info(msg)
-        print(msg)
         return
     else:
         object_id = layer.selected_object_id
         if object_id == 0:
-            msg = f"Please select an object to edit"
+            msg = "Please select an object to edit"
             show_info(msg)
-            print(msg)
             return
         else:
-            curr_position = layer.click_coords 
+            curr_position = layer.click_coords
             curr_slice_idx = curr_position[0]
             layer_slice = layer.data[curr_slice_idx]
-            mask_slice = (layer_slice == object_id) 
+            mask_slice = (layer_slice == object_id)
             labelled_mask_slice, num_features = label(mask_slice)
             target_label = labelled_mask_slice[curr_position[1], curr_position[2]]
 
             if new_id is not None:
-                layer_slice[labelled_mask_slice == target_label] = new_id 
+                layer_slice[labelled_mask_slice == target_label] = new_id
             else:
                 max_id = layer.data.max()
                 if max_id >= 255:
                     msg = "Cannot assign a new ID: the mask is stored as uint8 and already has 255 objects (maximum)."
                     show_error(msg)
-                    print(msg)
                     return
                 new_id = max_id + 1
                 layer_slice[labelled_mask_slice == target_label] = new_id
@@ -171,8 +164,7 @@ def edit_object_id(new_id: int=None):
                 l.refresh()
             msg = f"Changed object {object_id} at slice {curr_slice_idx} to new ID {new_id}"
             show_info(msg)
-            print(msg)
-    
+
     layer.selected_object_id = 0
     layer.click_coords = None
 
@@ -183,7 +175,7 @@ def renumber():
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
-    
+
     layer = viewer.layers.selection.active
     if layer.name == "Masks":
         old_to_new_mapping = {}
@@ -202,12 +194,10 @@ def renumber():
             layer.refresh()
         msg = f"Renumbered labels from 1 to {int(layer.data.max())} sequentially"
         show_info(msg)
-        print(msg)
-    
+
     else:
-        msg = f"Renumbering only works in the Masks layer"
+        msg = "Renumbering only works in the Masks layer"
         show_info(msg)
-        print(msg)
 
     layer.selected_object_id = 0
     layer.click_coords = None
@@ -216,18 +206,17 @@ def renumber():
 ###### edit a specific object ######
 def sync_object_to_masks():
     """To sync changes by napari's built-in tool (e.g., paint brush, label eraser) on the Object layer back to the Masks layer.
-    Please press the Apply Changes button if you make any changes on the Object layer so that they will also be visible on the Masks layer.""" 
+    Please press the Apply Changes button if you make any changes on the Object layer so that they will also be visible on the Masks layer."""
 
     viewer = napari.current_viewer()
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
         return
-    
+
     object_layer = viewer.layers.selection.active
     if not object_layer.name.startswith("Object"):
-        msg = f"Current active layer is not an Object layer, please select the object layer which contains the changes you want to save as active"
+        msg = "Current active layer is not an Object layer, please select the object layer which contains the changes you want to save as active"
         show_warning(msg)
-        print(msg)
     else:
         object_id = int(object_layer.name.split()[-1])
         mask = (object_layer.data > 0)
@@ -243,10 +232,15 @@ def sync_object_to_masks():
         viewer.layers[object_layer_name].visible = False
         viewer.layers["Masks"].visible = True
         show_info(msg)
-        print(msg)
 
 
 def add_object_layer(object_id: int = None):
+    """Show a single object as its own labels layer named ``Object {id}``.
+
+    Uses the currently selected object id (from :func:`select_object`) if no
+    ``object_id`` is passed. Hides other layers so only CD206 + the object
+    remain visible, and reports the first slice on which the object appears.
+    """
     viewer = napari.current_viewer()
     required_layers = ["Masks", "CD206"]
     if _layers_not_in_viewer_error(viewer, required_layers):
@@ -265,9 +259,8 @@ def add_object_layer(object_id: int = None):
         target_object_id = object_id
 
     if target_object_id is None:
-        msg = f"Please specify an object to view"
+        msg = "Please specify an object to view"
         show_info(msg)
-        print(msg)
         return
 
     mask_data = layer.data # changes (using napari's built-in tools) on Masks layer will be synced to Object layer
@@ -276,32 +269,29 @@ def add_object_layer(object_id: int = None):
     if target_object_id > max_object_id:
         msg = f"Only {max_object_id} macrophages in this image"
         show_warning(msg)
-        print(msg) 
     elif target_object_id not in all_object_ids:
         msg = f"Macrophage with {target_object_id} does not exist"
         show_warning(msg)
-        print(msg)
-    else:   
+    else:
         for l in viewer.layers:
             l.visible = False
         if "CD206" in viewer.layers:
             viewer.layers["CD206"].visible = True
-        else: 
-            viewer.add_image(dataState.cd206_images, name="CD206") 
+        else:
+            viewer.add_image(dataState.cd206_images, name="CD206")
 
         mask = (mask_data == target_object_id)
         object_position = np.where(mask)[0].min()
         layer_name = f"Object {target_object_id}"
         if layer_name not in viewer.layers:
-            object_layer = viewer.add_labels(mask, name=layer_name)
-        else:    
+            viewer.add_labels(mask, name=layer_name)
+        else:
             viewer.layers[layer_name].data = mask
             viewer.layers[layer_name].visible = True
 
         msg = f"Object {target_object_id} first appears at slice {object_position}."
         show_info(msg)
-        print(msg)
-    
+
     layer.selected_object_id = 0
     layer.click_coords = None
 
@@ -324,9 +314,11 @@ def _sort_objects_by_xy(mask_layer, z: int) -> list[int]:
 
 
 def _add_highlight_layer(viewer):
+    """Return the yellow "Selection" shapes layer, creating it on first use."""
     if "Selection" not in viewer.layers:
         return viewer.add_shapes(
             name="Selection",
+            ndim=3,
             shape_type="rectangle",
             edge_color="yellow",
             face_color="transparent",
@@ -383,7 +375,8 @@ def _activate_object_in_slice(viewer, mask_layer, obj_id: int, z: int):
     ys, xs = np.where(slice == obj_id)
     if ys.size == 0:
         return
-    y = int(ys.min()); x = int(xs.min()) 
+    y = int(ys.min())
+    x = int(xs.min())
     mask_layer.selected_object_id = obj_id
     mask_layer.click_coords = (z, y, x)
     try:
@@ -426,6 +419,13 @@ def _step_object_in_slice(delta: int):
 
 ##### Interpolate image #####
 def interpolate_to_isotropic():
+    """Resample the selected CD206/DAPI/Masks layer to isotropic voxel spacing.
+
+    Zoom factors are computed from :data:`dataState.voxel_size_um` so the
+    smallest axis becomes the reference; masks are resampled with
+    nearest-neighbour (to preserve label ids), image channels with linear
+    interpolation. Adds a new layer named ``"{name} (iso)"``.
+    """
     from scipy.ndimage import zoom
 
     if not dataState.voxel_size_um or any(float(v) <= 0.0 for v in dataState.voxel_size_um):
@@ -470,11 +470,13 @@ def shrink_mask_to_cd206():
     """Shrink the selected object's mask on the current slice using CD206 + DAPI signal.
 
     Region-based approach:
+
     1. Build a combined signal from CD206 (+ DAPI if available), normalised to [0, 1].
     2. Compute an Otsu threshold on the signal values *inside the mask only*, so the
        threshold separates bright cell signal from dim regions included in the mask.
     3. Keep only pixels above the threshold, then retain the largest connected component
        (the real cell body) and discard small fragments.
+
     The result is always intersected with the original mask so it can only shrink.
     """
     viewer = napari.current_viewer()
@@ -486,14 +488,12 @@ def shrink_mask_to_cd206():
     if layer.name != "Masks":
         msg = f"Current active layer is {layer.name}, please select the Masks layer"
         show_warning(msg)
-        print(msg)
         return
 
     object_id = getattr(layer, "selected_object_id", None)
     if not object_id:
         msg = "Please click on an object to select it first"
         show_info(msg)
-        print(msg)
         return
 
     cd206 = dataState.cd206_images
@@ -510,6 +510,7 @@ def shrink_mask_to_cd206():
         return
 
     def _norm(arr):
+        """Min-max normalise ``arr`` to ``[0, 1]``; return ``None`` if constant."""
         a = arr.astype(float)
         lo, hi = a.min(), a.max()
         if hi == lo:
@@ -583,7 +584,6 @@ def shrink_mask_to_cd206():
     removed_count = int(obj_mask_slice.sum()) - int(shrunk.sum())
     msg = f"Shrunk object {object_id} on slice {z} using {channels_used}: removed {removed_count} voxels"
     show_info(msg)
-    print(msg)
 
     layer.selected_object_id = 0
     layer.click_coords = None
