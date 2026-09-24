@@ -4,6 +4,7 @@
 [![Python Version](https://img.shields.io/pypi/pyversions/napari-macrophage)](https://pypi.org/project/napari-macrophage/)
 [![License](https://img.shields.io/badge/license-Apache%202.0-blue)](https://github.com/Amirhk-dev/macrophage-napari/blob/main/LICENSE)
 [![napari hub](https://img.shields.io/badge/napari%20hub-napari--macrophage-blue)](https://napari-hub.org/plugins/napari-macrophage)
+[![Documentation Status](https://readthedocs.org/projects/macrophage-napari/badge/?version=latest)](https://macrophage-napari.readthedocs.io/en/latest/)
 
 A napari plugin for interactive 3D macrophage image analysis — mask editing, Otsu/Watershed segmentation, YOLO bounding box export, and morphology analysis.
 
@@ -62,6 +63,17 @@ napari
 6. **Export** — YOLO `.txt` bounding boxes or morphology `.csv`
 
 Input shape: `(Z, Y, X)` for grayscale, `(C, Z, Y, X)` for multi-channel (C ∈ {2, 5}).
+
+## Documentation
+
+Full user guide and API reference:
+**[macrophage-napari.readthedocs.io](https://macrophage-napari.readthedocs.io/en/latest/)**
+
+Build the docs locally:
+```bash
+pip install -e ".[docs]"
+sphinx-build docs docs/_build/html
+```
 
 ## Companion pipeline
 
