@@ -86,6 +86,9 @@ known-first-party = ["napari_macrophage"]
 [project.entry-points."napari.manifest"]
 napari-macrophage = "napari_macrophage:napari.yaml"
 
+[project.scripts]
+napari-macrophage = "napari_macrophage.__main__:main"
+
 [tool.setuptools.packages.find]
 where = ["."]
 
