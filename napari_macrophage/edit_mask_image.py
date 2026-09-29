@@ -429,7 +429,7 @@ def interpolate_to_isotropic():
     from scipy.ndimage import zoom
 
     if not dataState.voxel_size_um or any(float(v) <= 0.0 for v in dataState.voxel_size_um):
-        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first.")
+        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first in the 'Voxel Size' section.")
         return
 
     viewer = napari.current_viewer()
@@ -465,19 +465,316 @@ def interpolate_to_isotropic():
         )
 
 
+##### Shrink ALL masks (signal-based, same method as Shrink Mask) — preview / accept / cancel / undo #####
+SHRINK_PREVIEW_LAYER = "Masks (shrink preview)"
+
+
+def _get_masks_layer(viewer):
+    """Return the Masks labels layer, or None with a warning if missing."""
+    if "Masks" not in viewer.layers:
+        show_warning("Masks layer not found.")
+        return None
+    return viewer.layers["Masks"]
+
+
+def _norm_channel(arr: np.ndarray) -> np.ndarray | None:
+    """Min-max normalise ``arr`` to ``[0, 1]``; return ``None`` if constant."""
+    a = arr.astype(float)
+    lo, hi = float(a.min()), float(a.max())
+    if hi == lo:
+        return None
+    return (a - lo) / (hi - lo)
+
+
+def _shrink_slice_by_signal_normalized(
+    obj_mask_slice: np.ndarray,
+    cd206_norm: np.ndarray,
+    dapi_norm: np.ndarray | None,
+    gaussian_sigma: float = 2.0,
+) -> np.ndarray | None:
+    """Shrink one 2D mask slice to the bright-signal region — normalised inputs.
+
+    ``cd206_norm`` / ``dapi_norm`` must already be min-max normalised to
+    ``[0, 1]`` (or ``None`` if unavailable / constant). Steps:
+
+    1. Compute an Otsu threshold on CD206 values *inside the mask only*.
+    2. If ``dapi_norm`` is provided, do the same on DAPI and union the two
+       above-threshold masks so nuclei that stain weakly for CD206 are kept.
+    3. Keep the largest 2D connected component (the main cell body).
+    4. Fill interior holes.
+    5. Optionally smooth the boundary by a Gaussian filter (``sigma``).
+    6. Intersect with the original mask — the result can only shrink.
+
+    Returns the shrunken boolean mask (possibly all-False when the shrink
+    removed every pixel), or ``None`` when a threshold cannot be computed
+    (CD206 is constant inside the mask on this slice).
+    """
+    if not obj_mask_slice.any() or cd206_norm is None:
+        return None
+
+    def _otsu_above(channel_norm: np.ndarray) -> np.ndarray | None:
+        vals = channel_norm[obj_mask_slice]
+        if vals.max() == vals.min():
+            return None
+        return channel_norm >= threshold_otsu(vals)
+
+    cd206_above = _otsu_above(cd206_norm)
+    if cd206_above is None:
+        return None
+
+    above = cd206_above
+    if dapi_norm is not None:
+        dapi_above = _otsu_above(dapi_norm)
+        if dapi_above is not None:
+            above = cd206_above | dapi_above
+    above_thresh = above & obj_mask_slice
+
+    if not above_thresh.any():
+        return np.zeros_like(obj_mask_slice)
+
+    labeled, n_comps = label(above_thresh)
+    if n_comps > 1:
+        comp_sizes = np.bincount(labeled.ravel())
+        comp_sizes[0] = 0
+        above_thresh = (labeled == int(comp_sizes.argmax()))
+
+    above_thresh = binary_fill_holes(above_thresh)
+
+    if gaussian_sigma > 0:
+        above_thresh = gaussian_filter(above_thresh.astype(float), sigma=float(gaussian_sigma)) >= 0.5
+
+    return above_thresh & obj_mask_slice
+
+
+def shrink_all_masks_by_signal_array(
+    masks: np.ndarray,
+    cd206: np.ndarray,
+    dapi: np.ndarray | None = None,
+    use_dapi: bool = True,
+    gaussian_sigma: float = 2.0,
+    closing_radius_3d: int = 0,
+) -> np.ndarray:
+    """Signal-based batch shrink over every object and every Z slice.
+
+    Same per-slice method as :func:`shrink_mask_to_cd206` — Otsu inside the
+    mask on CD206 (optionally unioned with DAPI), largest 2D CC, fill holes,
+    Gaussian smooth, intersect with original — but applied to every object
+    and every slice at once. Cross-slice continuity is enforced by
+    :func:`clean3d.largest_3d_component` (largest 3D component, with an
+    optional 3D closing to bridge disappearing slices).
+
+    When CD206 has no intensity variation on a slice (degenerate), the
+    original mask for that slice is kept unchanged so continuity is not
+    broken by a spurious empty slice.
+    """
+    from .clean3d import largest_3d_component
+
+    if masks.ndim != 3:
+        raise ValueError(f"Masks must be 3D (Z, Y, X); got shape {masks.shape}.")
+    if cd206.shape != masks.shape:
+        raise ValueError(f"CD206 shape {cd206.shape} does not match masks {masks.shape}.")
+    if dapi is not None and dapi.shape != masks.shape:
+        raise ValueError(f"DAPI shape {dapi.shape} does not match masks {masks.shape}.")
+
+    out = np.zeros_like(masks)
+    Z = masks.shape[0]
+
+    unique_ids = np.unique(masks)
+    unique_ids = unique_ids[unique_ids > 0]
+    if unique_ids.size == 0:
+        return out
+
+    # Pre-normalise each channel once per z so multiple objects sharing a
+    # slice don't repeat the work.
+    cd206_norm_by_z: list[np.ndarray | None] = [_norm_channel(cd206[z]) for z in range(Z)]
+    have_dapi = use_dapi and dapi is not None
+    dapi_norm_by_z: list[np.ndarray | None] | None = (
+        [_norm_channel(dapi[z]) for z in range(Z)] if have_dapi else None
+    )
+
+    for obj_id in unique_ids:
+        obj_mask = (masks == obj_id)
+        z_present = np.where(obj_mask.any(axis=(1, 2)))[0]
+        if z_present.size == 0:
+            continue
+
+        shrunk_by_z: dict[int, np.ndarray] = {}
+        for z in z_present:
+            slice_mask = obj_mask[z]
+            shrunk = _shrink_slice_by_signal_normalized(
+                slice_mask,
+                cd206_norm_by_z[int(z)],
+                dapi_norm_by_z[int(z)] if dapi_norm_by_z is not None else None,
+                gaussian_sigma=gaussian_sigma,
+            )
+            if shrunk is None:
+                # Degenerate signal on this slice — keep the original so we
+                # don't fabricate a false z-gap.
+                shrunk_by_z[int(z)] = slice_mask.copy()
+            else:
+                shrunk_by_z[int(z)] = shrunk.astype(bool)
+
+        merged = largest_3d_component(
+            shrunk_by_z,
+            closing_radius_3d=int(closing_radius_3d),
+            min_voxels=0,
+        )
+
+        for z, m in merged.items():
+            if 0 <= z < Z:
+                out[z][m] = obj_id
+
+    return out
+
+
+def shrink_all_masks_preview(
+    use_dapi: bool = True,
+    gaussian_sigma: float = 2.0,
+    closing_radius_3d: int = 0,
+):
+    """Signal-based batch shrink preview — same method as *Shrink Mask*, on every object.
+
+    Reads the CD206 (and, optionally, DAPI) image from the plugin state and
+    fits every mask to the bright signal. The result is shown as a
+    ``Masks (shrink preview)`` layer while the original ``Masks`` layer is
+    hidden but untouched. Accept with :func:`shrink_all_masks_accept` or
+    discard with :func:`shrink_all_masks_cancel`.
+    """
+    from qtpy.QtWidgets import QApplication
+
+    viewer = napari.current_viewer()
+    if _layers_not_in_viewer_error(viewer, ["Masks"]):
+        return
+
+    masks_layer = _get_masks_layer(viewer)
+    if masks_layer is None:
+        return
+
+    cd206 = dataState.cd206_images
+    if cd206 is None:
+        show_warning("CD206 image not loaded — signal-based shrink needs the CD206 channel.")
+        return
+
+    masks = np.asarray(masks_layer.data)
+    if masks.ndim != 3:
+        show_warning(f"Masks must be 3D (Z, Y, X); got shape {masks.shape}.")
+        return
+    if cd206.shape != masks.shape:
+        show_warning(f"CD206 shape {cd206.shape} doesn't match Masks {masks.shape}.")
+        return
+
+    if SHRINK_PREVIEW_LAYER in viewer.layers:
+        show_info("A shrink preview is already active — accept or cancel it first.")
+        return
+
+    dapi = dataState.dapi_images if use_dapi else None
+    channels_used = "CD206 + DAPI" if (use_dapi and dapi is not None) else "CD206"
+
+    show_info(
+        f"Shrinking all masks using {channels_used} (sigma={gaussian_sigma}, "
+        f"3D closing={closing_radius_3d})… This may take a while for large images — please wait."
+    )
+    QApplication.processEvents()
+
+    shrunk = shrink_all_masks_by_signal_array(
+        masks,
+        cd206,
+        dapi,
+        use_dapi=bool(use_dapi),
+        gaussian_sigma=float(gaussian_sigma),
+        closing_radius_3d=int(closing_radius_3d),
+    )
+
+    masks_layer._shrink_pre_preview = masks.copy()
+    masks_layer.visible = False
+    viewer.add_labels(shrunk, name=SHRINK_PREVIEW_LAYER, opacity=0.7)
+
+    n_before = int((masks > 0).sum())
+    n_after = int((shrunk > 0).sum())
+    removed = n_before - n_after
+    show_info(
+        f"Preview ready — {removed} voxel(s) removed "
+        f"({n_before} → {n_after}). Accept or Cancel to proceed."
+    )
+
+
+def shrink_all_masks_accept():
+    """Commit the current shrink preview into the Masks layer and enable undo."""
+    viewer = napari.current_viewer()
+    if _layers_not_in_viewer_error(viewer, ["Masks"]):
+        return
+
+    masks_layer = _get_masks_layer(viewer)
+    if masks_layer is None:
+        return
+
+    if SHRINK_PREVIEW_LAYER not in viewer.layers:
+        show_info("No shrink preview to accept.")
+        return
+
+    preview_data = np.asarray(viewer.layers[SHRINK_PREVIEW_LAYER].data)
+    pre = getattr(masks_layer, "_shrink_pre_preview", None)
+
+    masks_layer.data = preview_data.astype(masks_layer.data.dtype, copy=False)
+    masks_layer.visible = True
+    masks_layer.refresh()
+
+    viewer.layers.remove(viewer.layers[SHRINK_PREVIEW_LAYER])
+
+    # Promote the pre-preview snapshot to the undo slot.
+    if pre is not None:
+        masks_layer._shrink_undo_backup = pre
+    masks_layer._shrink_pre_preview = None
+
+    show_info("Shrink applied. Use 'Undo Shrink' to revert if needed.")
+
+
+def shrink_all_masks_cancel():
+    """Discard the current shrink preview and restore the original Masks view."""
+    viewer = napari.current_viewer()
+    if "Masks" not in viewer.layers:
+        return
+
+    masks_layer = viewer.layers["Masks"]
+
+    if SHRINK_PREVIEW_LAYER in viewer.layers:
+        viewer.layers.remove(viewer.layers[SHRINK_PREVIEW_LAYER])
+
+    masks_layer.visible = True
+    masks_layer._shrink_pre_preview = None
+    show_info("Shrink preview cancelled — masks unchanged.")
+
+
+def shrink_all_masks_undo():
+    """Restore the Masks volume to its state before the last accepted shrink."""
+    viewer = napari.current_viewer()
+    if _layers_not_in_viewer_error(viewer, ["Masks"]):
+        return
+
+    masks_layer = _get_masks_layer(viewer)
+    if masks_layer is None:
+        return
+
+    backup = getattr(masks_layer, "_shrink_undo_backup", None)
+    if backup is None:
+        show_info("Nothing to undo.")
+        return
+
+    masks_layer.data = backup.astype(masks_layer.data.dtype, copy=False)
+    masks_layer.visible = True
+    masks_layer.refresh()
+    masks_layer._shrink_undo_backup = None
+    show_info("Reverted to the pre-shrink masks.")
+
+
 ##### Shrink mask to CD206 + DAPI boundaries (current slice only) #####
 def shrink_mask_to_cd206():
     """Shrink the selected object's mask on the current slice using CD206 + DAPI signal.
 
-    Region-based approach:
-
-    1. Build a combined signal from CD206 (+ DAPI if available), normalised to [0, 1].
-    2. Compute an Otsu threshold on the signal values *inside the mask only*, so the
-       threshold separates bright cell signal from dim regions included in the mask.
-    3. Keep only pixels above the threshold, then retain the largest connected component
-       (the real cell body) and discard small fragments.
-
-    The result is always intersected with the original mask so it can only shrink.
+    Thin wrapper around :func:`_shrink_slice_by_signal_normalized` — see that
+    helper for the per-slice algorithm. This function only handles selecting
+    the object, fetching the CD206/DAPI slices, and writing the result back
+    into the Masks layer.
     """
     viewer = napari.current_viewer()
     required_layers = ["Masks", "CD206"]
@@ -486,14 +783,12 @@ def shrink_mask_to_cd206():
 
     layer = viewer.layers.selection.active
     if layer.name != "Masks":
-        msg = f"Current active layer is {layer.name}, please select the Masks layer"
-        show_warning(msg)
+        show_warning(f"Current active layer is {layer.name}, please select the Masks layer")
         return
 
     object_id = getattr(layer, "selected_object_id", None)
     if not object_id:
-        msg = "Please click on an object to select it first"
-        show_info(msg)
+        show_info("Please click on an object to select it first")
         return
 
     cd206 = dataState.cd206_images
@@ -509,70 +804,22 @@ def shrink_mask_to_cd206():
         show_warning(f"Object {object_id} is not present on slice {z}")
         return
 
-    def _norm(arr):
-        """Min-max normalise ``arr`` to ``[0, 1]``; return ``None`` if constant."""
-        a = arr.astype(float)
-        lo, hi = a.min(), a.max()
-        if hi == lo:
-            return None
-        return (a - lo) / (hi - lo)
-
-    cd206_norm = _norm(cd206[z])
+    cd206_norm = _norm_channel(cd206[z])
     if cd206_norm is None:
         show_warning(f"No CD206 intensity variation on slice {z}")
         return
 
-    def _otsu_mask(channel_norm):
-        """Return a boolean mask of pixels above Otsu threshold, computed inside the object mask."""
-        vals = channel_norm[obj_mask_slice]
-        if vals.max() == vals.min():
-            return None
-        thresh = threshold_otsu(vals)
-        return channel_norm >= thresh
-
-    cd206_above = _otsu_mask(cd206_norm)
-
-    # Threshold DAPI independently and union with CD206 so neither signal is lost
     dapi = dataState.dapi_images
-    channels_used = "CD206"
-    if dapi is not None:
-        dapi_norm = _norm(dapi[z])
-        if dapi_norm is not None:
-            dapi_above = _otsu_mask(dapi_norm)
-            if dapi_above is not None:
-                above_thresh = (cd206_above | dapi_above) & obj_mask_slice
-                channels_used = "CD206 + DAPI"
-            else:
-                above_thresh = cd206_above & obj_mask_slice
-        else:
-            above_thresh = cd206_above & obj_mask_slice
-    else:
-        above_thresh = cd206_above & obj_mask_slice
+    dapi_norm = _norm_channel(dapi[z]) if dapi is not None else None
+    channels_used = "CD206 + DAPI" if dapi_norm is not None else "CD206"
 
-    if not above_thresh.any():
-        show_warning(f"No pixels above threshold for object {object_id} on slice {z}. Aborting.")
-        return
-
-    # Keep the largest connected component so we get the main cell body
-    labeled, n_comps = label(above_thresh)
-    if n_comps > 1:
-        comp_sizes = np.bincount(labeled.ravel())
-        comp_sizes[0] = 0  # ignore background label
-        above_thresh = (labeled == int(comp_sizes.argmax()))
-
-    # Fill interior holes (background pixels fully enclosed by the object)
-    above_thresh = binary_fill_holes(above_thresh)
-
-    # Smooth the boundary: blur the binary mask and re-threshold at 0.5
-    above_thresh = gaussian_filter(above_thresh.astype(float), sigma=2) >= 0.5
-
-    shrunk = above_thresh & obj_mask_slice  # safety: intersect with original mask
-
-    if not shrunk.any():
+    shrunk = _shrink_slice_by_signal_normalized(
+        obj_mask_slice, cd206_norm, dapi_norm, gaussian_sigma=2.0
+    )
+    if shrunk is None or not shrunk.any():
         show_warning(f"Shrinking would remove all voxels of object {object_id} on slice {z}. Aborting.")
         return
 
-    # Write back: clear old object pixels, paint shrunk region
     new_slice = mask_data[z].copy()
     new_slice[obj_mask_slice] = 0
     new_slice[shrunk] = object_id
@@ -582,8 +829,7 @@ def shrink_mask_to_cd206():
         l.refresh()
 
     removed_count = int(obj_mask_slice.sum()) - int(shrunk.sum())
-    msg = f"Shrunk object {object_id} on slice {z} using {channels_used}: removed {removed_count} voxels"
-    show_info(msg)
+    show_info(f"Shrunk object {object_id} on slice {z} using {channels_used}: removed {removed_count} voxels")
 
     layer.selected_object_id = 0
     layer.click_coords = None

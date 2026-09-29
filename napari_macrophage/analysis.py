@@ -100,7 +100,7 @@ def cells_analysis(*args, **kwargs):
 
     voxel_size = get_voxel_size_um()
     if voxel_size is None or any(float(v) <= 0.0 for v in voxel_size):
-        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first.")
+        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first in the 'Voxel Size' section.")
         return
     vol = _compute_volume(*voxel_size, mask_data) # unpack tuple as arguments
     sph, surface_area = _compute_sphericity(*voxel_size, mask_data)

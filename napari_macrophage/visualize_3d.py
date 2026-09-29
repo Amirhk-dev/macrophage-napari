@@ -232,7 +232,7 @@ def visualize_macrophage_3d(
 
     voxel = get_voxel_size_um()
     if voxel is None or any(float(v) <= 0.0 for v in voxel):
-        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first.")
+        show_warning("Pixel size is not set. Please set Pixel size X, Y, Z first in the 'Voxel Size' section.")
         return
 
     mask = np.asarray(main_viewer.layers["Masks"].data)
@@ -279,6 +279,17 @@ def visualize_macrophage_3d(
     _set_canvas_bg(viewer_3d, background)
 
     bg_state = {"white": background == "white"}
+    surface_layer = viewer_3d.layers[_layer_name(object_id)]
+
+    def _apply_wireframe():
+        """Sync wireframe visibility/width; lines are always black."""
+        try:
+            surface_layer.wireframe.visible = tri_checkbox.isChecked()
+            surface_layer.wireframe.width = float(width_spin.value())
+            surface_layer.wireframe.color = (0.0, 0.0, 0.0, 1.0)
+        except Exception as e:
+            show_warning(f"Could not update triangulation overlay: {e}")
+
     def _toggle_bg():
         """Flip the 3D canvas between black and white background."""
         bg_state["white"] = not bg_state["white"]
@@ -294,11 +305,29 @@ def visualize_macrophage_3d(
     export_btn.clicked.connect(lambda: _export_surface_from_viewer(viewer_3d))
     bg_btn = QtWidgets.QPushButton("Toggle Background (black/white)")
     bg_btn.clicked.connect(_toggle_bg)
+
+    tri_checkbox = QtWidgets.QCheckBox("Show Triangulation (wireframe)")
+    tri_checkbox.setChecked(False)
+    width_row = QtWidgets.QHBoxLayout()
+    width_row.setContentsMargins(0, 0, 0, 0)
+    width_label = QtWidgets.QLabel("Line width")
+    width_spin = QtWidgets.QDoubleSpinBox()
+    width_spin.setRange(0.1, 10.0)
+    width_spin.setSingleStep(0.1)
+    width_spin.setValue(3.0)
+    width_row.addWidget(width_label)
+    width_row.addWidget(width_spin)
+    tri_checkbox.stateChanged.connect(lambda _: _apply_wireframe())
+    width_spin.valueChanged.connect(lambda _: _apply_wireframe())
+
     vbox.addWidget(screenshot_btn)
     vbox.addWidget(export_btn)
     vbox.addWidget(bg_btn)
+    vbox.addWidget(tri_checkbox)
+    vbox.addLayout(width_row)
     vbox.addStretch(1)
     viewer_3d.window.add_dock_widget(controls, area="right", name="Publication Tools")
+    _apply_wireframe()
 
     extent_um = verts.max(axis=0) - verts.min(axis=0)
     show_info(

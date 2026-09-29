@@ -4,7 +4,7 @@ name: napari-macrophage
 contributions:
   commands:
     - id: napari-macrophage.upload_image
-      title: Load Image + Mask
+      title: Load Image & Mask
       python_name: napari_macrophage.build_widgets:make_add_layer_from_tif_widget
 
     - id: napari-macrophage.upload_zarr
@@ -21,7 +21,7 @@ contributions:
 
   widgets:
     - command: napari-macrophage.upload_image
-      display_name: Load Image + Mask
+      display_name: Load Image & Mask
 
     - command: napari-macrophage.upload_zarr
       display_name: Load from Zarr

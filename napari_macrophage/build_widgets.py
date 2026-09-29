@@ -28,6 +28,10 @@ from .edit_mask_image import (
     interpolate_to_isotropic,
     renumber,
     select_object,
+    shrink_all_masks_accept,
+    shrink_all_masks_cancel,
+    shrink_all_masks_preview,
+    shrink_all_masks_undo,
     shrink_mask_to_cd206,
     sync_object_to_masks,
 )
@@ -102,6 +106,98 @@ def _built_widgets():
         shrink_mask_to_cd206,
         call_button="Shrink Mask"
     )
+
+    shrink_all_preview_widget = magicgui(
+        shrink_all_masks_preview,
+        use_dapi={
+            "label": "Use DAPI",
+            "tooltip": (
+                "If ON and a DAPI channel is loaded, the mask is kept where either CD206 OR DAPI is bright.\n"
+                "OFF: fit strictly to CD206 (nuclei that stain weakly for CD206 may then be trimmed)."
+            ),
+        },
+        gaussian_sigma={
+            "label": "Smoothing sigma",
+            "min": 0.0, "max": 5.0, "step": 0.1,
+            "tooltip": (
+                "Boundary smoothness of the shrunken mask.\n\n"
+                "Low (0–1): follows the signal closely; edges may look jagged.\n"
+                "Medium (2, default): smooth cell-like boundary.\n"
+                "High (4+): very rounded; may bleed past subtle bright details."
+            ),
+        },
+        closing_radius_3d={
+            "label": "3D closing radius",
+            "min": 0, "max": 10, "step": 1,
+            "tooltip": (
+                "Bridges Z-gaps if shrinking removes an intermediate slice entirely, or splits an object into disconnected 3D pieces.\n\n"
+                "0: no bridging; only the largest 3D piece of each object survives.\n"
+                "1: bridge one-slice gaps — recommended for thin cells.\n"
+                "2–3: bridge larger gaps; may merge nearby objects, use with care."
+            ),
+        },
+        call_button="Shrink all masks (preview)",
+    )
+    for spin in shrink_all_preview_widget.native.findChildren((QtWidgets.QSpinBox, QtWidgets.QDoubleSpinBox)):
+        spin.setStyleSheet("font-size: 10pt;")
+    shrink_all_accept_widget = magicgui(
+        shrink_all_masks_accept,
+        call_button="Accept",
+    )
+    shrink_all_cancel_widget = magicgui(
+        shrink_all_masks_cancel,
+        call_button="Cancel",
+    )
+    shrink_all_undo_widget = magicgui(
+        shrink_all_masks_undo,
+        call_button="Undo Shrink",
+    )
+
+    shrink_all_help_btn = QtWidgets.QPushButton("? Help — what do these parameters do?")
+    shrink_all_help_btn.setToolTip("Open a detailed explanation of the Shrink-all-masks parameters and workflow.")
+
+    def _show_shrink_all_help():
+        """Open a rich-text QMessageBox explaining the Shrink-all-masks parameters."""
+        box = QtWidgets.QMessageBox()
+        box.setWindowTitle("Shrink all masks — help")
+        box.setIcon(QtWidgets.QMessageBox.Information)
+        box.setTextFormat(QtCore.Qt.RichText)
+        box.setText(
+            "<h3>Shrink all masks (signal-based)</h3>"
+            "<p>For every object in the <b>Masks</b> layer and every Z slice where it appears, "
+            "this action fits the mask to the actual <b>CD206</b> signal (and, optionally, DAPI). "
+            "It is the batch version of the <b>Shrink Mask</b> button — the same method, applied "
+            "to every object at once. Nothing is written until you press <b>Accept</b>.</p>"
+            "<hr>"
+            "<h4>Parameters</h4>"
+            "<p><b>Use DAPI</b><br>"
+            "If <b>on</b> and a DAPI channel is loaded, the mask is kept where either CD206 <i>or</i> "
+            "DAPI is bright. If <b>off</b>, the mask is fitted strictly to CD206.<br>"
+            "• Turn <b>on</b> to preserve nuclei that stain weakly for CD206.<br>"
+            "• Turn <b>off</b> to fit only the CD206-positive cell body.</p>"
+            "<p><b>Smoothing sigma</b><br>"
+            "Boundary smoothness of the shrunken mask.<br>"
+            "• Low (0&nbsp;–&nbsp;1): follows the signal closely; edges may look jagged.<br>"
+            "• Medium (2, default): smooth cell-like boundary — recommended for most cells.<br>"
+            "• High (4+): very rounded; may bleed past subtle bright details.</p>"
+            "<p><b>3D closing radius</b><br>"
+            "Bridges Z-gaps if the shrink removes an intermediate slice entirely, or splits the "
+            "object into disconnected 3D pieces.<br>"
+            "• 0 (default): no bridging; only the largest 3D piece of each object survives.<br>"
+            "• 1: bridge one-slice gaps — recommended for thin cells.<br>"
+            "• 2&nbsp;–&nbsp;3: bridge larger gaps; may merge nearby objects, use with care.</p>"
+            "<hr>"
+            "<h4>Workflow</h4>"
+            "<p>1. Click <b>Shrink all masks (preview)</b>. The result appears as a semi-transparent "
+            "<i>Masks (shrink preview)</i> layer; the original <i>Masks</i> layer is hidden but untouched.<br>"
+            "2. Inspect. Then press <b>Accept</b> to commit, <b>Cancel</b> to discard, or later "
+            "<b>Undo Shrink</b> to revert an accepted change.</p>"
+            "<p><i>Requires the CD206 channel to be loaded. Large volumes can take a few seconds.</i></p>"
+        )
+        box.setStandardButtons(QtWidgets.QMessageBox.Ok)
+        box.exec_()
+
+    shrink_all_help_btn.clicked.connect(_show_shrink_all_help)
 
     add_roi_widget = magicgui(
         lambda: add_roi_layer(run_algo="otsu"),
@@ -213,6 +309,10 @@ def _built_widgets():
     _set_call_button_tooltip(view_object_widget, "[v] View the selected object only in a new layer with name Object {ID}. You can either click on the object to select it or enter the ID manually. The click has a higher priority.")
     _set_call_button_tooltip(apply_changes_widget, "Save changes made on the Object layer back to the Masks layer.")
     _set_call_button_tooltip(shrink_mask_widget, "Shrink the selected object's mask to fit the real CD206 boundaries. Uses morphological Chan-Vese (region-based active contour) initialised from the current mask — pulls inward where CD206 signal is weak.")
+    _set_call_button_tooltip(shrink_all_preview_widget, "Fit every object's mask to the CD206 (and optionally DAPI) signal — the batch version of 'Shrink Mask'. The result is shown as a semi-transparent 'Masks (shrink preview)' layer; the original masks are hidden but unchanged. Hover over each field for details, or click the Help button for a full explanation. Requires CD206 to be loaded. Accept to commit, Cancel to discard.")
+    _set_call_button_tooltip(shrink_all_accept_widget, "Commit the shrink preview into the Masks layer. The pre-shrink state is kept so you can Undo.")
+    _set_call_button_tooltip(shrink_all_cancel_widget, "Discard the shrink preview and restore the original Masks view. Nothing was modified.")
+    _set_call_button_tooltip(shrink_all_undo_widget, "Restore the Masks layer to its state before the last accepted shrink.")
 
     _set_call_button_tooltip(add_roi_widget, "Draw a bounding box on the ROI layer. 3D Otsu segmentation will be automatically applied to the last drawn box, and the result will appear in the Preview Mask layer. You can adjust the threshold using the slider below and rerun Otsu if needed.")
     _set_call_button_tooltip(finalise_3d_widget, "Save the current Otsu segmentation result back to Mask layer.")
@@ -274,6 +374,9 @@ def _built_widgets():
         _row(change_id_widget.native, new_id_widget.native),
         _row(view_object_widget.native, apply_changes_widget.native),
         _row(shrink_mask_widget.native),
+        _row(shrink_all_preview_widget.native),
+        _row(shrink_all_help_btn),
+        _row(shrink_all_accept_widget.native, shrink_all_cancel_widget.native, shrink_all_undo_widget.native),
     )
 
     seg_group = _section(
@@ -332,16 +435,21 @@ def _built_widgets():
     curr_dock = viewer.window.add_dock_widget(wrapper, area="right", name="Macrophage Tools")
     main_tools_dock = curr_dock
 
-    # Place the tools dock directly below the "Annotate & Correct Masks/Boxes" dock
+    # Place the tools dock directly below the "Annotate & Correct Masks/Boxes"
+    # dock if it exists (menu-driven flow), else fall back to below the
+    # "Load Image & Mask" dock (launcher flow).
     try:
         qt_window = viewer.window._qt_window
-        edit_dock = next(
-            (d for d in qt_window.findChildren(QtWidgets.QDockWidget)
-             if "Annotate" in (d.windowTitle() or "") and d is not curr_dock),
-            None
+        docks = [d for d in qt_window.findChildren(QtWidgets.QDockWidget) if d is not curr_dock]
+        anchor_dock = next(
+            (d for d in docks if "Annotate" in (d.windowTitle() or "")),
+            None,
+        ) or next(
+            (d for d in docks if "Load Image" in (d.windowTitle() or "")),
+            None,
         )
-        if edit_dock is not None:
-            qt_window.splitDockWidget(edit_dock, curr_dock, QtCore.Qt.Vertical)
+        if anchor_dock is not None:
+            qt_window.splitDockWidget(anchor_dock, curr_dock, QtCore.Qt.Vertical)
     except Exception:
         pass
 
@@ -388,7 +496,7 @@ def _make_add_mask_layer_widget():
 def make_add_layer_from_tif_widget():
     """Return a Qt container that combines the Load Image and Load Mask forms.
 
-    Registered in ``napari.yaml`` as the "Load Image + Mask" menu command.
+    Registered in ``napari.yaml`` as the "Load Image & Mask" menu command.
     """
     img_w = _make_add_image_layer_widget()
     mask_w = _make_add_mask_layer_widget()
