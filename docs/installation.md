@@ -57,3 +57,16 @@ napari
 
 The plugin's commands appear under **Plugins → napari-macrophage** in the
 napari menu bar.
+
+### Launcher command (skip the menu clicks)
+
+Installing the package also registers a `napari-macrophage` console script
+that starts napari with the two most-used docks — **Load Image & Mask** and
+**Macrophage Tools** — already docked side-by-side on the right:
+
+```bash
+napari-macrophage
+```
+
+The plain `napari` command is unaffected — use it when you want a clean
+viewer without the plugin's docks pre-mounted.

@@ -45,7 +45,7 @@ source_suffix = {
 
 html_theme = "furo"
 html_static_path = ["_static"]
-html_title = f"napari-macrophage {version}"
+html_title = f"napari-macrophage {release}"
 
 # -- autodoc / autosummary ---------------------------------------------------
 

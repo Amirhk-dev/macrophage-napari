@@ -55,7 +55,15 @@ napari
 
 ## Usage
 
-1. **Load data** — Plugins → napari-macrophage → Load Image + Mask
+Start napari with the two main plugin docks already open:
+
+```bash
+napari-macrophage
+```
+
+(The regular `napari` command still works — use it if you want a clean viewer without the plugin's docks pre-mounted.)
+
+1. **Load data** — Plugins → napari-macrophage → Load Image & Mask (or use the *Load Image & Mask* dock opened by `napari-macrophage`)
 2. **Edit masks** — Plugins → napari-macrophage → Annotate & Correct Masks/Boxes
 3. **Segment** — Draw ROI bbox → Otsu preview → Save or Run Watershed
 4. **Detect** — Run ONNX detection on CD206 + DAPI slices
